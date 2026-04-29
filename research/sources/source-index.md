@@ -54,3 +54,42 @@ This file records the external sources used for the initial design check. Prefer
   - Source for pairwise comparison as a scalable preference-evaluation method.
 - Liu et al., "Aligning with Human Judgement: The Role of Pairwise Preference in Large Language Model Evaluators" (COLM 2024): https://research.monash.edu/en/publications/aligning-with-human-judgement-the-role-of-pairwise-preference-in-/
   - Source for pairwise-preference search outperforming direct scoring in LLM evaluation alignment.
+
+## Scaling, Operations, and Infrastructure
+
+- exo GitHub repository: https://github.com/exo-explore/exo
+  - Source for local multi-device inference clustering and OpenAI/Claude/Responses/Ollama-compatible APIs.
+- vLLM OpenAI-compatible server docs: https://docs.vllm.ai/serving/openai_compatible_server.html
+  - Source for serving local/cloud models behind OpenAI-compatible Chat, Completions, and Responses APIs.
+- Ray resource scheduling docs: https://docs.ray.io/en/latest/ray-core/scheduling/resources.html
+  - Source for Python distributed task/actor CPU, GPU, and custom-resource scheduling.
+- Ray actor docs: https://docs.ray.io/en/latest/ray-core/actors.html
+  - Source for Ray actors as stateful workers, resource requirements, and restart/retry options.
+- Prefect workflow orchestration overview: https://www.prefect.io/how-it-works
+  - Source for Python-native flows/tasks, local execution with cloud/server tracking, retries, state, and observability.
+- Temporal durable execution overview: https://temporal.io/
+  - Source for durable workflows, automatic state capture, retries, task queues, signals, timers, and long-running workflow recovery.
+- DuckDB S3 API support: https://duckdb.org/docs/stable/core_extensions/httpfs/s3api
+  - Source for reading/writing/globbing files on S3-compatible object storage, including Parquet workflows.
+- OpenTelemetry Python docs: https://opentelemetry.io/docs/languages/python/
+  - Source for Python traces, metrics, logs status, and supported Python versions.
+- OpenTelemetry Python instrumentation docs: https://opentelemetry.io/docs/languages/python/instrumentation/
+  - Source for manual traces, spans, metrics, and log instrumentation.
+- structlog stable docs: https://www.structlog.org/en/stable/
+  - Source for structured JSON/logfmt/console logging, asyncio/contextvars support, and Python logging integration.
+- Python asyncio queues docs: https://docs.python.org/3/library/asyncio-queue.html
+  - Source for async queues, worker patterns, and join/task_done coordination.
+- Python asyncio tasks docs: https://docs.python.org/3.12/library/asyncio-task.html
+  - Source for task scheduling, cancellation behavior, and cleanup recommendations.
+- Kubernetes GPU scheduling docs: https://kubernetes.io/docs/tasks/manage-gpus/scheduling-gpus/
+  - Source for GPU scheduling through Kubernetes device plugins.
+- Modal GPU docs: https://modal.com/docs/guide/gpu
+  - Source for cloud GPU function execution, GPU type/count selection, and GPU fallbacks.
+- Modal introduction docs: https://modal.com/docs/guide
+  - Source for serverless Python infrastructure, autoscaling, batch jobs, and low-latency inference.
+- RunPod docs: https://docs.runpod.io/
+  - Source for GPU pods, serverless endpoints, and scalable GPU/CPU resources.
+- Lambda Cloud docs: https://docs.lambda.ai/
+  - Source for on-demand GPU instances, larger H100/B200 clusters, Kubernetes, and Slurm options.
+- NVIDIA Dynamo introduction: https://docs.dynamo.nvidia.com/dynamo/getting-started/introduction
+  - Source for distributed inference serving, engine-agnostic vLLM/SGLang/TensorRT-LLM support, KV-cache routing/offloading, autoscaling, observability, and fault tolerance.
