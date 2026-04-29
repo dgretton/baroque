@@ -1,0 +1,53 @@
+runs:
+  baseline_prompt_only:
+    capability_profile: prompt_only_ollama
+    topology: actor_theater_grader
+    active_agent_sets: [baseline_agents]
+    active_scenario_sets: [starter_scenarios]
+    active_rankers: [absolute_rating_debug]
+    storage_profile: local_dev
+    metadata:
+      purpose: "Minimal prompt-only Ollama vertical slice."
+
+roles:
+  actor:
+    default_model_pool: small_local_gemma
+    default_controls:
+      transcript_policy: actor_running_window
+
+  theater:
+    default_model_pool: small_local_gemma
+
+  grader:
+    default_model_pool: small_local_gemma
+    default_controls:
+      plain_output_instructions: grader_json_text_contract
+
+agents:
+  actor_a:
+    role: actor
+    genomes: [actor_a_seed]
+
+  grader_a:
+    role: grader
+    genomes: [grader_a_seed]
+
+agent_sets:
+  baseline_agents:
+    agents: [actor_a, grader_a]
+
+genomes:
+  actor_a_seed:
+    control_requests:
+      persona_text:
+        value: "You are an Actor who asks careful, specific follow-up questions."
+      sampling:
+        temperature: 0.8
+
+  grader_a_seed:
+    control_requests:
+      persona_text:
+        value: "You are a Grader who evaluates relevance, completeness, and factual care."
+      plain_output_instructions:
+        value: "Return JSON with rating and justification fields."
+

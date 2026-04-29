@@ -1,0 +1,17 @@
+capability_profiles:
+  prompt_only_ollama:
+    allowed_controls:
+      - model_choice
+      - persona_text
+      - message_examples
+      - transcript_policy
+      - plain_output_instructions
+    denied_controls:
+      - tools
+      - retrieval
+      - custom_modelfile
+      - adapter
+      - activation_steering
+    provider_requirements:
+      provider: ollama_openai
+

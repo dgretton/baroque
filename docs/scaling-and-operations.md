@@ -122,6 +122,68 @@ When multiple runners or cloud workers enter:
 
 S3-compatible storage is a good long-term target because it works with AWS S3, MinIO, Google Cloud, Cloudflare R2, and other providers, while DuckDB can read/write Parquet through S3-compatible APIs.
 
+## Containerization Strategy
+
+Use partial containerization with execution profiles, not mandatory full containerization.
+
+Recommended modes:
+
+```text
+native-local
+  host Python or venv
+  host Ollama/exo
+  local DuckDB and filesystem artifacts
+
+compose-local
+  containerized Baroque runner
+  optional Postgres, MinIO, telemetry collector, dashboard
+  host Ollama/exo/vLLM as an endpoint
+
+cloud-worker
+  containerized Baroque runner
+  remote control plane and object storage
+  cloud/local inference endpoint configured externally
+```
+
+The inference layer should not be containerized by default in early local development. On macOS and Apple Silicon especially, Ollama, exo, MLX, and Metal-backed inference are simpler and usually faster as host services. Treat them as external endpoints.
+
+Good early container targets:
+
+- Baroque runner
+- tests and scripts
+- local dashboard when one exists
+- Postgres/MinIO/OpenTelemetry integration testing
+- cloud worker image
+
+Poor early mandatory container targets:
+
+- local Ollama on Mac
+- exo cluster
+- Apple Metal/MLX inference
+- anything whose GPU/driver path is still changing
+
+Pros:
+
+- reproducible Python/runtime dependencies
+- easier CI and cloud-worker packaging
+- cleaner local integration tests with Postgres/MinIO/telemetry
+- easier migration to Modal, RunPod, Lambda, Kubernetes, or other GPU infrastructure
+- fewer "works on this machine" dependency mismatches
+
+Cons:
+
+- local model serving may be slower or more awkward inside containers
+- GPU containers add CUDA/driver/device-plugin complexity
+- Docker on macOS adds virtualization overhead and host-network friction
+- volume/data ownership can make long-run artifacts harder to reason about
+- containerization does not solve the main bottleneck, which is inference latency
+
+Design rule:
+
+> Containerization is an execution profile, not a project assumption.
+
+The code should only see configured endpoints, storage profiles, runner IDs, and capability profiles. Whether the runner is native, in Docker Compose, in Kubernetes, or inside a cloud worker should not change the research model.
+
 ## Logging And Telemetry
 
 Use structured logs from day one.

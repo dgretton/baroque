@@ -1,0 +1,23 @@
+topologies:
+  actor_theater_grader:
+    nodes:
+      actor:
+        role: actor
+      theater:
+        role: theater
+      grader:
+        role: grader
+    edges:
+      - from: actor
+        to: theater
+        relation: queries
+      - from: theater
+        to: actor
+        relation: responds
+      - from: actor
+        to: grader
+        relation: transcript_input
+      - from: theater
+        to: grader
+        relation: transcript_input
+

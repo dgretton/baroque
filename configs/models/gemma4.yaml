@@ -1,0 +1,46 @@
+runtime_endpoints:
+  local_ollama:
+    provider: ollama_openai
+    base_url: "${BAROQUE_LLM_BASE_URL:-http://localhost:11434/v1}"
+    api_key: "${BAROQUE_LLM_API_KEY:-ollama}"
+    concurrency_limit: 1
+    timeout_s: 600
+
+models:
+  gemma4_e2b:
+    endpoint_pool: [local_ollama]
+    model: gemma4:e2b
+    context_window: 131072
+    capability_tags: [chat, text, image, audio, thinking]
+    local_size_gb: 7.2
+
+  gemma4_e4b:
+    endpoint_pool: [local_ollama]
+    model: gemma4:e4b
+    context_window: 131072
+    capability_tags: [chat, text, image, audio, thinking]
+    local_size_gb: 9.6
+
+  gemma4_26b:
+    endpoint_pool: [local_ollama]
+    model: gemma4:26b
+    context_window: 262144
+    capability_tags: [chat, text, image, thinking]
+    local_size_gb: 18
+
+  gemma4_31b:
+    endpoint_pool: [local_ollama]
+    model: gemma4:31b
+    context_window: 262144
+    capability_tags: [chat, text, image, thinking]
+    local_size_gb: 20
+
+model_pools:
+  small_local_gemma:
+    models: [gemma4_e2b, gemma4_e4b]
+    selection: sampled
+
+  workstation_gemma:
+    models: [gemma4_e2b, gemma4_e4b, gemma4_26b, gemma4_31b]
+    selection: sampled
+

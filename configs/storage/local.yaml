@@ -1,0 +1,15 @@
+storage_profiles:
+  local_dev:
+    runtime_store:
+      kind: duckdb
+      path: data/runtime/baroque.duckdb
+    artifact_store:
+      kind: local_filesystem
+      root: data/artifacts
+    event_log:
+      kind: jsonl
+      root: data/logs
+    analysis_exports:
+      kind: parquet
+      root: data/parquet
+
