@@ -1,5 +1,7 @@
 # Evolving Multi-Agent Interrogators for Large Language Models — Design Document
 
+> Status note, 2026-04-29: this is an archival long-form design document. It preserves the original theater framing and research intent, but some implementation details have evolved. Current implementation-facing decisions live in `implementation-architecture.md`, `configuration-architecture.md`, `scaling-and-operations.md`, `storage-strategy.md`, and `development.md`. In particular, current code uses `orchestration/` rather than the older `dag/` package name, starts with a direct OpenAI-compatible gateway rather than LiteLLM as a required dependency, and treats role topology as an interaction/evaluation graph while stage dependencies are represented separately through parent content hashes.
+
 ## 1\. Project Summary
 
 This project builds a framework for evolving populations of cooperating and supervising LLM agents that extract high-quality, relevant information from target language models. Agents are defined by personas — prompt-prefixed behavioral specifications — and are iteratively refined through structured multi-agent evaluation and evolutionary optimization.
@@ -586,4 +588,3 @@ Once this loop is running and producing improving scores, add roles incrementall
 - **Screenwriter automation**: When and how to transition from human-authored scenarios to LLM-generated ones, and how to prevent scenario gaming.  
 - **Activation engineering and beyond-prompt conditioning**: Whether local models can be shaped via activation pinning, weight subsetting, or other techniques that outperform prompt-prefix personas. The builder pattern accommodates this, but the empirical value is unknown.  
 - **Role-recursion depth sensitivity**: How many meta-evaluation layers actually help, and when do additional layers add noise rather than signal?
-

@@ -2,8 +2,8 @@
 
 This directory holds the project design documents and implementation-facing notes.
 
-- `Evolving LLM Interrogators Design.md`: current detailed design document.
-- `Evolving Multi-Agent Interrogators for Large Language Models.docx`: earlier Word design document with comments.
+- `Evolving LLM Interrogators Design.md`: archival long-form design document. It remains useful for conceptual intent and theater vocabulary, but implementation details are superseded by the current architecture notes below.
+- `Evolving Multi-Agent Interrogators for Large Language Models.docx`: earlier archival Word design document with comments.
 - `configuration-architecture.md`: plural-by-default configuration principles, capability profiles, and phased control-surface priorities.
 - `development.md`: local development commands and runtime data conventions.
 - `implementation-architecture.md`: repo structure, system boundaries, and language/component selection.

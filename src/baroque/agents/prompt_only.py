@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from baroque.builder.query_builder import QueryBuilder
@@ -35,21 +36,19 @@ async def actor_theater_conversation_handler(
 
 
 async def grader_eval_handler(stage: StageRecord, context: StageContext) -> StageResult:
-    """Run a prompt-only Grader evaluation.
+    """Run a prompt-only Grader evaluation."""
 
-    The first vertical slice stores parent artifact references on the completed
-    parent stage, but the runner does not yet hydrate them into child handlers.
-    Until that is added, the Grader request includes the conversation hash and
-    scenario. This keeps the stage runnable while preserving the causal link.
-    """
-
-    request = _provider_request_from_stage(stage, user_content=_grader_user_content(stage))
+    hydrated_stage = await hydrate_grader_parent(stage, context)
+    request = _provider_request_from_stage(
+        hydrated_stage,
+        user_content=_grader_user_content(hydrated_stage),
+    )
     response = await _send(context, request)
     artifact = await _write_json_artifact(
         context,
         {
             "kind": "grader_eval",
-            "stage": _stage_summary(stage),
+            "stage": _stage_summary(hydrated_stage),
             "request": request.model_dump(mode="json", exclude={"api_key"}),
             "response": response.model_dump(mode="json"),
         },
@@ -140,7 +139,32 @@ def _grader_user_content(stage: StageRecord) -> str:
         "You are the Grader. Evaluate the Actor-Theater conversation associated with "
         f"content hash {conversation_hash}.\n\n"
         f"Scenario:\n{scenario.get('prompt', '')}\n\n"
+        f"Conversation:\n{stage.metadata.get('parent_conversation_text', 'not hydrated')}\n\n"
         "Return JSON with rating and justification fields."
+    )
+
+
+async def hydrate_grader_parent(stage: StageRecord, context: StageContext) -> StageRecord:
+    """Return a copy of a Grader stage with parent conversation text in metadata."""
+
+    conversation_hash = stage.metadata.get("conversation_hash")
+    if not conversation_hash or context.stage_store is None or context.artifact_store is None:
+        return stage
+
+    parent = await context.stage_store.get_stage_by_hash(str(conversation_hash))
+    if parent is None or not parent.artifact_refs:
+        return stage
+
+    payload = json.loads((await context.artifact_store.get_bytes(parent.artifact_refs[0])).decode())
+    response_text = (((payload.get("response") or {}).get("text")) or "").strip()
+    return stage.model_copy(
+        update={
+            "metadata": stage.metadata
+            | {
+                "parent_conversation_text": response_text,
+                "parent_artifact_hash": parent.artifact_refs[0].content_hash,
+            }
+        }
     )
 
 

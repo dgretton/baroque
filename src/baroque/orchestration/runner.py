@@ -7,7 +7,13 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-from baroque.core.interfaces import ArtifactStore, EventSink, InferenceGateway, LeaseStore
+from baroque.core.interfaces import (
+    ArtifactStore,
+    EventSink,
+    InferenceGateway,
+    LeaseStore,
+    StageStore,
+)
 from baroque.core.models import EventRecord, StageRecord
 from baroque.orchestration.handlers import (
     StageContext,
@@ -56,6 +62,7 @@ class AsyncStageRunner:
         config: RunnerConfig,
         artifact_store: ArtifactStore | None = None,
         inference_gateway: InferenceGateway | None = None,
+        stage_store: StageStore | None = None,
         event_sink: EventSink | None = None,
     ) -> None:
         if config.max_concurrent_stages < 1:
@@ -65,6 +72,7 @@ class AsyncStageRunner:
         self._config = config
         self._artifact_store = artifact_store
         self._inference_gateway = inference_gateway
+        self._stage_store = stage_store
         self._event_sink = event_sink
         self._stop_event = asyncio.Event()
 
@@ -161,6 +169,7 @@ class AsyncStageRunner:
                 runner_id=self._config.runner_id,
                 artifact_store=self._artifact_store,
                 inference_gateway=self._inference_gateway,
+                stage_store=self._stage_store,
                 event_sink=self._event_sink,
                 metadata=self._config.context_metadata,
             )

@@ -121,7 +121,7 @@ pending
 
 running
   -> failed_retryable
-  -> pending after backoff
+  -> running after retry delay when reclaimed by a runner
 
 running
   -> failed_terminal
@@ -334,15 +334,23 @@ For cloud rules:
 
 ## Minimal First Implementation
 
-For the first code pass, implement:
+Implemented in the current local scaffold:
 
-- file-based YAML config with resolved run snapshots
-- DuckDB tables for runs, samples, stages, attempts, artifacts, and events
+- file-based YAML config loading with environment-resolved values
+- stage metadata snapshots of the relevant resolved config inputs
+- DuckDB tables for stages and attempts
 - local filesystem content-addressed artifact store
 - JSONL structured logs
 - deterministic content hashes
 - lease fields on stages
+- parent-hash dependency gating
+- retry delay for retryable failures
+
+Still next:
+
+- explicit run/sample tables
+- artifact manifest tables
+- structured event tables in DuckDB
 - Parquet export command
 
-That is enough to survive ordinary chaos without drowning the project in infrastructure.
-
+This remains the smallest storage path that should survive ordinary chaos without drowning the project in infrastructure.

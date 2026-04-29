@@ -18,6 +18,8 @@ In practice:
 
 Defaults are still useful, but they should fill in missing plural settings rather than erase the plural shape.
 
+Topology config describes role interaction and evaluation structure. It is not the same thing as the executable stage dependency graph. Role topologies may contain interaction cycles, such as Actor querying Theater and Theater responding to Actor. Planned stages still use explicit parent content hashes for execution dependencies, and those dependencies must remain acyclic for a concrete run.
+
 ## Why This Matters
 
 The research question is not only "what is the best Actor?" It is "what kinds of control surfaces produce better agents under what constraints?"
@@ -243,7 +245,7 @@ genomes:
   actor_a_seed:
     control_requests:
       persona_text:
-        value_ref: personas/actor_a_seed.md
+        value: "You are an Actor who asks careful, specific follow-up questions."
       message_examples:
         examples: []
       sampling:
@@ -277,4 +279,3 @@ Start with:
 7. one debug ranker
 
 But keep the config shape plural from day one. That keeps the first vertical slice humane without painting the project into a single-agent, single-model, single-runtime corner.
-

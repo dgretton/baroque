@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import re
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
@@ -35,7 +37,7 @@ def load_project_config(paths: Iterable[str | Path]) -> ProjectConfig:
     merged: dict[str, Any] = {}
     for path in paths:
         merged = deep_merge(merged, load_yaml_file(path))
-    return ProjectConfig.model_validate(merged)
+    return ProjectConfig.model_validate(expand_env_values(merged))
 
 
 def load_project_config_dir(root: str | Path) -> ProjectConfig:
@@ -56,3 +58,27 @@ def deep_merge(left: Mapping[str, Any], right: Mapping[str, Any]) -> dict[str, A
             merged[key] = right_value
     return merged
 
+
+_ENV_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-(.*?))?\}")
+
+
+def expand_env_values(value: Any) -> Any:
+    """Expand `${VAR}` and `${VAR:-default}` strings inside config values."""
+
+    if isinstance(value, Mapping):
+        return {key: expand_env_values(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [expand_env_values(item) for item in value]
+    if isinstance(value, str):
+        return _ENV_PATTERN.sub(_replace_env_match, value)
+    return value
+
+
+def _replace_env_match(match: re.Match[str]) -> str:
+    name = match.group(1)
+    default = match.group(2)
+    if name in os.environ:
+        return os.environ[name]
+    if default is not None:
+        return default
+    return ""

@@ -68,7 +68,7 @@ Core loop:
 3. Execute claimed stages asynchronously, bounded by endpoint/model concurrency limits.
 4. Persist successful results atomically.
 5. Mark retryable failures with retry policy and backoff.
-6. Enqueue downstream stages when parents complete.
+6. Make downstream stages eligible when parents complete.
 7. Periodically heartbeat active leases.
 8. On startup, reclaim expired leases and resume.
 
@@ -80,6 +80,7 @@ Important details:
 - Store request snapshots, not just responses.
 - Do not let in-memory queues be the only source of truth.
 - Prefer append-only event records plus derived views.
+- Either enqueue downstream stages at completion time or seed dependent stages up front and let parent-hash claim gating control eligibility. The current local implementation seeds the first Actor-Theater and Grader stages up front and uses parent-hash gating in DuckDB.
 
 ## Graceful Shutdown
 

@@ -48,7 +48,7 @@ configs/
   models/                # endpoints, models, and model pools
   runs/                  # run-level experiment definitions
   storage/               # local/cloud storage profiles
-  topologies/            # role DAGs
+  topologies/            # role interaction/evaluation graphs
 
 docs/                    # design and architecture documents
 research/                # research notes and source index
@@ -74,6 +74,7 @@ The important interfaces live in `baroque.core.interfaces`:
 - `ConfigStore`: loads immutable resolved config snapshots
 - `Planner`: resolves missing stages from topology and sample state
 - `LeaseStore`: claims, heartbeats, completes, and fails work
+- `StageStore`: inserts and looks up planned stages by deterministic content hash
 - `ArtifactStore`: persists content-addressed blobs
 - `InferenceGateway`: sends provider requests to local or remote endpoints
 - `EventSink`: emits structured events/logs/telemetry
@@ -96,7 +97,7 @@ The scaffold includes:
 - JSONL event sink
 - prompt-only Ollama config examples
 
-This is not the full runner yet. It is the foundation the runner will stand on.
+The first runner and prompt-only vertical slice now stand on this foundation. The implementation is still intentionally narrow, but the core nouns and interfaces are live code rather than a paper scaffold.
 
 ## Current Implementation Status
 
@@ -111,13 +112,15 @@ Implemented:
 - async stage runner with handler registry, bounded concurrency, heartbeats, retryable/terminal failure handling, and structured event emission
 - static baseline planner that creates Actor-Theater conversation and Grader evaluation stages from config
 - prompt-only Actor-Theater and Grader handlers
+- child-stage artifact hydration from parent artifacts for the Grader path
 - mocked end-to-end vertical slice through planner, runtime store, runner, handlers, fake gateway, and artifacts
+- skipped-by-default Ollama integration test for the prompt-only vertical slice
+- environment-variable expansion for local endpoint configuration
 - JSONL event sink
 
 Not yet implemented:
 
-- real Ollama-backed execution smoke test
-- child-stage artifact hydration from parent artifacts
+- successful Ollama-backed smoke run in this development environment
 - DuckDB analysis exports
 - graceful shutdown orchestration
 - container profiles

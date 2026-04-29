@@ -42,6 +42,9 @@ baroque = ["py.typed"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = [
+  "integration: opt-in tests that require external services",
+]
 
 [tool.ruff]
 line-length = 100
