@@ -78,3 +78,35 @@ def test_duckdb_runtime_reclaims_expired_leases(tmp_path) -> None:
         assert abandoned.lease_owner is None
 
     asyncio.run(scenario())
+
+
+def test_duckdb_runtime_only_claims_stages_with_completed_parents(tmp_path) -> None:
+    async def scenario() -> None:
+        store = DuckDBRuntimeStore(tmp_path / "runtime.duckdb")
+        parent = StageSpec(stage_type="parent", run_id="run-1")
+        child = StageSpec(
+            stage_type="child",
+            run_id="run-1",
+            parent_hashes=[parent.deterministic_hash()],
+        )
+
+        inserted_child = await store.add_stage(child)
+        inserted_parent = await store.add_stage(parent)
+
+        first_claim = await store.claim_next_stage("runner-1")
+        assert first_claim is not None
+        assert first_claim.stage_id == inserted_parent.stage_id
+
+        artifact = ArtifactRef(
+            uri="memory://parent",
+            content_hash="sha256:parent",
+            media_type="application/json",
+            size_bytes=2,
+        )
+        await store.complete_stage(first_claim.stage_id, "runner-1", [artifact])
+
+        second_claim = await store.claim_next_stage("runner-1")
+        assert second_claim is not None
+        assert second_claim.stage_id == inserted_child.stage_id
+
+    asyncio.run(scenario())

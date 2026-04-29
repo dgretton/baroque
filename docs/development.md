@@ -35,3 +35,5 @@ data/
 The first runtime implementation uses DuckDB for local stage/lease metadata and a filesystem content-addressed artifact store.
 
 Retryable stage failures remain in `failed_retryable` until their retry delay expires. This prevents a failing handler from spinning forever inside a local `run_until_idle` call.
+
+The current vertical slice is tested with a fake inference gateway. That verifies config loading, planning, stage dependency gating, handler dispatch, artifact writes, and completion records without requiring Ollama to be running.

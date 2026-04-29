@@ -109,12 +109,15 @@ Implemented:
 - local filesystem artifact storage
 - DuckDB runtime store with stage insertion, claiming, heartbeats, completion, retryable/terminal failures, and expired-lease reclaim
 - async stage runner with handler registry, bounded concurrency, heartbeats, retryable/terminal failure handling, and structured event emission
+- static baseline planner that creates Actor-Theater conversation and Grader evaluation stages from config
+- prompt-only Actor-Theater and Grader handlers
+- mocked end-to-end vertical slice through planner, runtime store, runner, handlers, fake gateway, and artifacts
 - JSONL event sink
 
 Not yet implemented:
 
-- topology planner
-- real Actor-Theater-Grader stage handlers
+- real Ollama-backed execution smoke test
+- child-stage artifact hydration from parent artifacts
 - DuckDB analysis exports
 - graceful shutdown orchestration
 - container profiles

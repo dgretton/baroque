@@ -11,6 +11,7 @@ from baroque.config.models import (
     RoleConfig,
     RunConfig,
     RuntimeEndpoint,
+    ScenarioConfig,
 )
 
 __all__ = [
@@ -25,4 +26,5 @@ __all__ = [
     "RoleConfig",
     "RunConfig",
     "RuntimeEndpoint",
+    "ScenarioConfig",
 ]

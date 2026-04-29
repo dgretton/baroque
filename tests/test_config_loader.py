@@ -7,5 +7,5 @@ def test_default_configs_load() -> None:
     assert "baseline_prompt_only" in config.runs
     assert "prompt_only_ollama" in config.capability_profiles
     assert "gemma4_e2b" in config.models
+    assert "starter_questioning_strategy" in config.scenarios
     assert config.runs["baseline_prompt_only"].topology == "actor_theater_grader"
-

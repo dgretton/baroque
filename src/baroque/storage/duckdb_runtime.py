@@ -186,13 +186,13 @@ class DuckDBRuntimeStore:
         retry_cutoff = now - self._retry_delay
 
         with self._lock, self._connect() as conn:
-            row = conn.execute(
+            rows = conn.execute(
                 """
                 SELECT * FROM stages
                 WHERE status IN (?, ?)
                    OR (status = ? AND completed_at <= ?)
                 ORDER BY created_at, stage_id
-                LIMIT 1
+                LIMIT 100
                 """,
                 [
                     StageStatus.PENDING.value,
@@ -200,11 +200,11 @@ class DuckDBRuntimeStore:
                     StageStatus.FAILED_RETRYABLE.value,
                     retry_cutoff,
                 ],
-            ).fetchone()
-            if row is None:
+            ).fetchall()
+            record = self._first_runnable_stage(conn, rows)
+            if record is None:
                 return None
 
-            record = self._row_to_stage(row)
             next_attempt = record.attempt + 1
             conn.execute("BEGIN TRANSACTION")
             try:
@@ -255,6 +255,31 @@ class DuckDBRuntimeStore:
         if claimed is None:
             raise RuntimeError(f"claimed stage disappeared: {record.stage_id}")
         return claimed
+
+    def _first_runnable_stage(
+        self,
+        conn: duckdb.DuckDBPyConnection,
+        rows: Sequence[Sequence[Any]],
+    ) -> StageRecord | None:
+        for row in rows:
+            record = self._row_to_stage(row)
+            if self._parents_succeeded(conn, record.parent_hashes):
+                return record
+        return None
+
+    def _parents_succeeded(
+        self,
+        conn: duckdb.DuckDBPyConnection,
+        parent_hashes: Sequence[str],
+    ) -> bool:
+        for parent_hash in parent_hashes:
+            row = conn.execute(
+                "SELECT status FROM stages WHERE content_hash = ?",
+                [parent_hash],
+            ).fetchone()
+            if row is None or row[0] != StageStatus.SUCCEEDED.value:
+                return False
+        return True
 
     def _heartbeat_sync(self, stage_id: str, runner_id: str) -> None:
         now = utc_now()

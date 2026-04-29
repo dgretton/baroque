@@ -59,6 +59,14 @@ class LeaseStore(Protocol):
         """Record a failed attempt and optionally schedule a retry."""
 
 
+class StageStore(LeaseStore, Protocol):
+    async def add_stage(self, spec: StageSpec) -> StageRecord:
+        """Insert a planned stage, deduping by deterministic content hash."""
+
+    async def get_stage_by_hash(self, hash_value: str) -> StageRecord | None:
+        """Return a stage by deterministic content hash."""
+
+
 class ArtifactStore(Protocol):
     async def put_bytes(
         self,

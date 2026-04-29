@@ -8,7 +8,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from baroque.core.interfaces import ArtifactStore, EventSink
+from baroque.core.interfaces import ArtifactStore, EventSink, InferenceGateway
 from baroque.core.models import ArtifactRef, StageRecord
 
 
@@ -18,6 +18,7 @@ class StageContext:
 
     runner_id: str
     artifact_store: ArtifactStore | None = None
+    inference_gateway: InferenceGateway | None = None
     event_sink: EventSink | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 

@@ -6,6 +6,7 @@ from baroque.orchestration.handlers import (
     StageHandler,
     StageResult,
 )
+from baroque.orchestration.planner import StaticRunPlanner, TopologyGraph
 from baroque.orchestration.runner import AsyncStageRunner, RunnerConfig, RunnerStats
 
 __all__ = [
@@ -16,4 +17,6 @@ __all__ = [
     "StageExecutionError",
     "StageHandler",
     "StageResult",
+    "StaticRunPlanner",
+    "TopologyGraph",
 ]

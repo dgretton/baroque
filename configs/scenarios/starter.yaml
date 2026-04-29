@@ -1,0 +1,15 @@
+scenarios:
+  starter_questioning_strategy:
+    prompt: >-
+      The Theater should explain how it would decide which follow-up questions to
+      ask when a user gives an incomplete but answerable technical request.
+    objectives:
+      - extract the Theater's assumptions
+      - ask at least one specific follow-up question
+      - summarize what information is still missing
+    metadata:
+      domain: general_reasoning
+
+scenario_sets:
+  starter_scenarios:
+    scenarios: [starter_questioning_strategy]

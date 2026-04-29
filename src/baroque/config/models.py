@@ -61,6 +61,12 @@ class GenomeConfig(FlexibleModel):
     parent_genomes: list[str] = Field(default_factory=list)
 
 
+class ScenarioConfig(FlexibleModel):
+    prompt: str
+    objectives: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class TopologyConfig(FlexibleModel):
     nodes: dict[str, dict[str, Any]] = Field(default_factory=dict)
     edges: list[dict[str, Any]] = Field(default_factory=list)
@@ -85,6 +91,7 @@ class ProjectConfig(FlexibleModel):
     agents: dict[str, AgentConfig] = Field(default_factory=dict)
     agent_sets: dict[str, dict[str, list[str]]] = Field(default_factory=dict)
     genomes: dict[str, GenomeConfig] = Field(default_factory=dict)
+    scenarios: dict[str, ScenarioConfig] = Field(default_factory=dict)
+    scenario_sets: dict[str, dict[str, list[str]]] = Field(default_factory=dict)
     topologies: dict[str, TopologyConfig] = Field(default_factory=dict)
     runs: dict[str, RunConfig] = Field(default_factory=dict)
-
