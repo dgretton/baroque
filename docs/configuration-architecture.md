@@ -283,6 +283,13 @@ The first executable planner uses `conversation_turns`, `disclosure_point_sets`,
 as plural or per-scenario/per-run fields so later experiments can vary rollout
 counts, assessor counts, and target rubrics without changing the stage model.
 
+Mutation records should likewise remain plural and typed. A mutation proposal
+stores the parent genome, target agent, operator kind, assessment references,
+rationale, author metadata, and a list of patch operations. A mutation
+application stores the proposal hash, parent and child genome IDs, resulting
+genome payload, and any errors. This keeps agent-authored edits, random sampling,
+crossover, and future non-prompt controls comparable under one durable shape.
+
 ## Dynamic Changes During A Run
 
 Do not mutate past config records. If something changes mid-run, record it as a new version:

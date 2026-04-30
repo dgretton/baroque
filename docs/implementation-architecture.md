@@ -109,6 +109,7 @@ The current executable slice is:
 4. plan one or more Grader assessment stages per rollout
 5. hydrate each Grader from the parent transcript artifact
 6. ask the Grader to judge configured disclosure points and return parseable JSON
+7. aggregate plural assessments into rollout-level disclosure statistics
 
 ## Current Implementation Status
 
@@ -121,8 +122,10 @@ Implemented:
 - local filesystem artifact storage
 - DuckDB runtime store with stage insertion, claiming, heartbeats, completion, retryable/terminal failures, and expired-lease reclaim
 - async stage runner with handler registry, bounded concurrency, heartbeats, retryable/terminal failure handling, and structured event emission
-- static baseline planner that creates Actor-Theater conversation and Grader evaluation stages from config
+- static baseline planner that creates Actor-Theater conversation, Grader evaluation, and assessment aggregate stages from config
 - prompt-only multi-turn Actor-Theater and Grader handlers
+- typed assessment records and rollout-level assessment aggregates
+- typed mutation proposal/application records with deterministic genome patch application
 - YAML-configured disclosure points and disclosure point sets
 - scenario-level conversation turn counts
 - run-level rollout and assessment replicate counts

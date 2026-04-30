@@ -137,6 +137,7 @@ class StaticRunPlanner:
                             },
                         )
                         stages.append(conversation)
+                        grader_hashes: list[str] = []
                         for assessment_index in range(assessment_replicates):
                             grader_eval = StageSpec(
                                 stage_type="grader_eval",
@@ -167,6 +168,37 @@ class StaticRunPlanner:
                                 },
                             )
                             stages.append(grader_eval)
+                            grader_hashes.append(grader_eval.deterministic_hash())
+
+                        assessment_aggregate = StageSpec(
+                            stage_type="assessment_aggregate",
+                            run_id=run_id,
+                            sample_id=sample_id,
+                            parent_hashes=grader_hashes,
+                            config_snapshot={
+                                "capability_profile": run.capability_profile,
+                                "topology": run.topology,
+                                "scenario_id": scenario_id,
+                                "scenario": scenario.model_dump(mode="json"),
+                                "disclosure_points": disclosure_points,
+                                "actor_id": actor_id,
+                                "actor": actor.model_dump(mode="json"),
+                                "actor_genome_id": actor_genome_id,
+                                "actor_genome": actor_genome.model_dump(mode="json"),
+                                "grader_id": grader_id,
+                                "grader": grader.model_dump(mode="json"),
+                                "grader_genome_id": grader_genome_id,
+                                "grader_genome": grader_genome.model_dump(mode="json"),
+                            },
+                            metadata={
+                                "role": "assessment_aggregator",
+                                "scenario_id": scenario_id,
+                                "rollout_index": rollout_index,
+                                "assessment_count": assessment_replicates,
+                                "conversation_hash": conversation.deterministic_hash(),
+                            },
+                        )
+                        stages.append(assessment_aggregate)
         return stages
 
     def _agents_for_role(

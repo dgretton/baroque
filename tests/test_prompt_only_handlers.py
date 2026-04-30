@@ -1,7 +1,11 @@
 import asyncio
 import json
 
-from baroque.agents.prompt_only import actor_theater_conversation_handler, grader_eval_handler
+from baroque.agents.prompt_only import (
+    actor_theater_conversation_handler,
+    assessment_aggregate_handler,
+    grader_eval_handler,
+)
 from baroque.core.models import ProviderRequest, ProviderResponse, StageRecord, StageSpec
 from baroque.orchestration.handlers import StageContext
 from baroque.storage.duckdb_runtime import DuckDBRuntimeStore
@@ -89,6 +93,7 @@ def test_grader_eval_handler_writes_artifact(tmp_path) -> None:
         assert "starter_assumptions" in str(gateway.requests[0].messages[-1].content)
         artifact = json.loads((await store.get_bytes(result.artifacts[0])).decode())
         assert artifact["parsed_assessment"]["disclosure_points"][0]["status"] == "partial"
+        assert artifact["assessment_record"]["disclosure_points"][0]["status"] == "partial"
 
     asyncio.run(scenario())
 
@@ -129,8 +134,83 @@ def test_grader_eval_handler_hydrates_parent_conversation(tmp_path) -> None:
     asyncio.run(scenario())
 
 
+def test_assessment_aggregate_handler_writes_rollout_summary(tmp_path) -> None:
+    async def scenario() -> None:
+        store = LocalArtifactStore(tmp_path / "artifacts")
+        runtime = DuckDBRuntimeStore(tmp_path / "runtime.duckdb")
+
+        parent_spec = _stage_spec(
+            "grader_eval",
+            metadata={
+                "conversation_hash": "sha256:conversation",
+                "rollout_index": 0,
+                "assessment_index": 0,
+            },
+        )
+        parent = await runtime.add_stage(parent_spec)
+        claimed_parent = await runtime.claim_next_stage("runner-1")
+        assert claimed_parent is not None
+        parent_artifact = await store.put_bytes(
+            json.dumps(
+                {
+                    "parsed_assessment": {
+                        "disclosure_points": [
+                            {
+                                "id": "starter_assumptions",
+                                "status": "extracted",
+                                "confidence": 0.9,
+                                "evidence": "The Actor asked about assumptions.",
+                            }
+                        ],
+                        "overall_rating": 0.8,
+                    }
+                }
+            ).encode(),
+            media_type="application/json",
+            suffix=".json",
+        )
+        await runtime.complete_stage(claimed_parent.stage_id, "runner-1", [parent_artifact])
+
+        aggregate_stage = StageRecord(
+            content_hash="sha256:aggregate",
+            run_id="run-1",
+            stage_type="assessment_aggregate",
+            parent_hashes=[parent.content_hash],
+        )
+        result = await assessment_aggregate_handler(
+            aggregate_stage,
+            StageContext(
+                runner_id="runner-1",
+                artifact_store=store,
+                stage_store=runtime,
+            ),
+        )
+
+        artifact = json.loads((await store.get_bytes(result.artifacts[0])).decode())
+        assert artifact["aggregate"]["assessment_count"] == 1
+        assert artifact["aggregate"]["disclosure_points"][0]["extraction_rate"] == 1.0
+        assert artifact["aggregate"]["overall_rating_mean"] == 0.8
+
+    asyncio.run(scenario())
+
+
 def _stage(stage_type: str, metadata: dict | None = None) -> StageRecord:
-    spec = StageSpec(
+    spec = _stage_spec(stage_type, metadata)
+    stage = StageRecord(
+        content_hash=spec.deterministic_hash(),
+        run_id=spec.run_id,
+        stage_type=stage_type,
+        metadata={
+            "config_snapshot": spec.config_snapshot,
+            "requested_controls": spec.requested_controls,
+            **(metadata or {}),
+        },
+    )
+    return stage
+
+
+def _stage_spec(stage_type: str, metadata: dict | None = None) -> StageSpec:
+    return StageSpec(
         stage_type=stage_type,
         run_id="run-1",
         config_snapshot={
@@ -154,14 +234,3 @@ def _stage(stage_type: str, metadata: dict | None = None) -> StageRecord:
         },
         metadata=metadata or {},
     )
-    stage = StageRecord(
-        content_hash=spec.deterministic_hash(),
-        run_id=spec.run_id,
-        stage_type=stage_type,
-        metadata={
-            "config_snapshot": spec.config_snapshot,
-            "requested_controls": spec.requested_controls,
-            **(metadata or {}),
-        },
-    )
-    return stage

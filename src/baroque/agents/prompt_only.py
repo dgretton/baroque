@@ -9,6 +9,10 @@ from baroque.builder.query_builder import QueryBuilder
 from baroque.core.hashing import canonical_json
 from baroque.core.models import ArtifactRef, ProviderRequest, ProviderResponse, StageRecord
 from baroque.orchestration.handlers import StageContext, StageExecutionError, StageResult
+from baroque.ranking.assessments import (
+    aggregate_assessments,
+    assessment_record_from_grader_artifact,
+)
 
 
 async def actor_theater_conversation_handler(
@@ -83,6 +87,14 @@ async def grader_eval_handler(stage: StageRecord, context: StageContext) -> Stag
     )
     response = await _send(context, request)
     parsed_assessment = _try_parse_json_object(response.text or "")
+    assessment_record = (
+        assessment_record_from_grader_artifact(
+            hydrated_stage,
+            {"parsed_assessment": parsed_assessment},
+        )
+        if parsed_assessment is not None
+        else None
+    )
     artifact = await _write_json_artifact(
         context,
         {
@@ -91,6 +103,9 @@ async def grader_eval_handler(stage: StageRecord, context: StageContext) -> Stag
             "request": request.model_dump(mode="json", exclude={"api_key"}),
             "response": response.model_dump(mode="json"),
             "parsed_assessment": parsed_assessment,
+            "assessment_record": (
+                assessment_record.model_dump(mode="json") if assessment_record is not None else None
+            ),
         },
         suffix=".grader.json",
     )
@@ -103,10 +118,64 @@ async def grader_eval_handler(stage: StageRecord, context: StageContext) -> Stag
     )
 
 
+async def assessment_aggregate_handler(stage: StageRecord, context: StageContext) -> StageResult:
+    """Aggregate one rollout's plural Grader assessments."""
+
+    if context.stage_store is None or context.artifact_store is None:
+        raise StageExecutionError(
+            "assessment aggregation requires stage and artifact stores",
+            retryable=False,
+            error_type="missing_runtime_store",
+        )
+
+    records = []
+    parent_artifacts: list[dict[str, Any]] = []
+    for parent_hash in stage.parent_hashes:
+        parent = await context.stage_store.get_stage_by_hash(parent_hash)
+        if parent is None or not parent.artifact_refs:
+            raise StageExecutionError(
+                f"assessment parent artifact is unavailable: {parent_hash}",
+                retryable=True,
+                error_type="missing_parent_artifact",
+            )
+        artifact = parent.artifact_refs[0]
+        payload = json.loads((await context.artifact_store.get_bytes(artifact)).decode())
+        payload["artifact_hash"] = artifact.content_hash
+        records.append(assessment_record_from_grader_artifact(parent, payload))
+        parent_artifacts.append(
+            {
+                "stage_hash": parent.content_hash,
+                "artifact_hash": artifact.content_hash,
+            }
+        )
+
+    aggregate = aggregate_assessments(records)
+    artifact = await _write_json_artifact(
+        context,
+        {
+            "kind": "assessment_aggregate",
+            "stage": _stage_summary(stage),
+            "parent_artifacts": parent_artifacts,
+            "assessment_records": [record.model_dump(mode="json") for record in records],
+            "aggregate": aggregate.model_dump(mode="json"),
+        },
+        suffix=".assessment_aggregate.json",
+    )
+    return StageResult(
+        artifacts=[artifact],
+        attributes={
+            "assessment_count": aggregate.assessment_count,
+            "disclosure_point_count": len(aggregate.disclosure_points),
+            "overall_rating_mean": aggregate.overall_rating_mean,
+        },
+    )
+
+
 def prompt_only_handlers() -> dict[str, Any]:
     return {
         "actor_theater_conversation": actor_theater_conversation_handler,
         "grader_eval": grader_eval_handler,
+        "assessment_aggregate": assessment_aggregate_handler,
     }
 
 
