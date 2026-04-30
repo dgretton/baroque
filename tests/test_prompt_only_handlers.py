@@ -5,6 +5,8 @@ from baroque.agents.prompt_only import (
     actor_theater_conversation_handler,
     assessment_aggregate_handler,
     grader_eval_handler,
+    mutation_application_handler,
+    mutation_proposal_handler,
 )
 from baroque.core.models import ProviderRequest, ProviderResponse, StageRecord, StageSpec
 from baroque.orchestration.handlers import StageContext
@@ -194,6 +196,123 @@ def test_assessment_aggregate_handler_writes_rollout_summary(tmp_path) -> None:
     asyncio.run(scenario())
 
 
+def test_mutation_proposal_handler_writes_prompt_patch(tmp_path) -> None:
+    async def scenario() -> None:
+        store = LocalArtifactStore(tmp_path / "artifacts")
+        runtime = DuckDBRuntimeStore(tmp_path / "runtime.duckdb")
+
+        parent_spec = StageSpec(stage_type="assessment_aggregate", run_id="run-1")
+        parent = await runtime.add_stage(parent_spec)
+        claimed_parent = await runtime.claim_next_stage("runner-1")
+        assert claimed_parent is not None
+        parent_artifact = await store.put_bytes(
+            json.dumps(
+                {
+                    "aggregate": {
+                        "disclosure_points": [
+                            {
+                                "point_id": "starter_missing_information",
+                                "label": "Missing information",
+                                "mean_score": 0.0,
+                                "partial_or_extracted_rate": 0.0,
+                            },
+                            {
+                                "point_id": "starter_assumptions",
+                                "label": "Theater assumptions",
+                                "mean_score": 1.0,
+                                "partial_or_extracted_rate": 1.0,
+                            },
+                        ]
+                    }
+                }
+            ).encode(),
+            media_type="application/json",
+            suffix=".json",
+        )
+        await runtime.complete_stage(claimed_parent.stage_id, "runner-1", [parent_artifact])
+
+        stage = _stage(
+            "mutation_proposal",
+            metadata={
+                "config_snapshot": _mutation_config_snapshot(),
+                "rollout_index": 0,
+                "conversation_hash": "sha256:conversation",
+            },
+        ).model_copy(update={"parent_hashes": [parent.content_hash]})
+        result = await mutation_proposal_handler(
+            stage,
+            StageContext(
+                runner_id="runner-1",
+                artifact_store=store,
+                stage_store=runtime,
+            ),
+        )
+
+        artifact = json.loads((await store.get_bytes(result.artifacts[0])).decode())
+        operation = artifact["proposal"]["operations"][0]
+        assert artifact["proposal"]["operator"] == "hand_authored"
+        assert operation["path"] == "/control_requests/persona_text/value"
+        assert "Missing information" in operation["value"]
+
+    asyncio.run(scenario())
+
+
+def test_mutation_application_handler_writes_child_genome(tmp_path) -> None:
+    async def scenario() -> None:
+        store = LocalArtifactStore(tmp_path / "artifacts")
+        runtime = DuckDBRuntimeStore(tmp_path / "runtime.duckdb")
+
+        parent_spec = StageSpec(stage_type="mutation_proposal", run_id="run-1")
+        parent = await runtime.add_stage(parent_spec)
+        claimed_parent = await runtime.claim_next_stage("runner-1")
+        assert claimed_parent is not None
+        parent_artifact = await store.put_bytes(
+            json.dumps(
+                {
+                    "proposal": {
+                        "parent_genome_id": "actor_a_seed",
+                        "target_agent_id": "actor_a",
+                        "operator": "hand_authored",
+                        "operations": [
+                            {
+                                "op": "replace",
+                                "path": "/control_requests/persona_text/value",
+                                "value": "Ask narrower questions.",
+                            }
+                        ],
+                    }
+                }
+            ).encode(),
+            media_type="application/json",
+            suffix=".json",
+        )
+        await runtime.complete_stage(claimed_parent.stage_id, "runner-1", [parent_artifact])
+
+        stage = _stage(
+            "mutation_application",
+            metadata={"config_snapshot": _mutation_config_snapshot()},
+        ).model_copy(update={"parent_hashes": [parent.content_hash]})
+        result = await mutation_application_handler(
+            stage,
+            StageContext(
+                runner_id="runner-1",
+                artifact_store=store,
+                stage_store=runtime,
+            ),
+        )
+
+        artifact = json.loads((await store.get_bytes(result.artifacts[0])).decode())
+        application = artifact["application"]
+        assert application["applied"] is True
+        assert application["child_genome_id"].startswith("actor_a_seed_mut_")
+        assert (
+            application["resulting_genome"]["control_requests"]["persona_text"]["value"]
+            == "Ask narrower questions."
+        )
+
+    asyncio.run(scenario())
+
+
 def _stage(stage_type: str, metadata: dict | None = None) -> StageRecord:
     spec = _stage_spec(stage_type, metadata)
     stage = StageRecord(
@@ -234,3 +353,16 @@ def _stage_spec(stage_type: str, metadata: dict | None = None) -> StageSpec:
         },
         metadata=metadata or {},
     )
+
+
+def _mutation_config_snapshot() -> dict:
+    return {
+        "actor_id": "actor_a",
+        "actor_genome_id": "actor_a_seed",
+        "actor_genome": {
+            "control_requests": {
+                "persona_text": {"value": "You are an Actor who asks careful questions."}
+            },
+            "parent_genomes": [],
+        },
+    }

@@ -8,6 +8,13 @@ from typing import Any
 from baroque.builder.query_builder import QueryBuilder
 from baroque.core.hashing import canonical_json
 from baroque.core.models import ArtifactRef, ProviderRequest, ProviderResponse, StageRecord
+from baroque.evolution.mutations import (
+    GenomePatchOp,
+    GenomePatchOperation,
+    MutationOperatorKind,
+    MutationProposal,
+    apply_mutation_proposal,
+)
 from baroque.orchestration.handlers import StageContext, StageExecutionError, StageResult
 from baroque.ranking.assessments import (
     aggregate_assessments,
@@ -171,11 +178,86 @@ async def assessment_aggregate_handler(stage: StageRecord, context: StageContext
     )
 
 
+async def mutation_proposal_handler(stage: StageRecord, context: StageContext) -> StageResult:
+    """Propose a deterministic prompt-only mutation from assessment evidence."""
+
+    aggregate_payload = await _load_single_parent_payload(stage, context, "mutation proposal")
+    aggregate = aggregate_payload.get("aggregate") or {}
+    actor_genome = _actor_genome(stage)
+    actor_genome_id = _actor_genome_id(stage)
+    proposal = _deterministic_prompt_mutation_proposal(
+        stage,
+        aggregate,
+        actor_genome,
+        actor_genome_id,
+    )
+    artifact = await _write_json_artifact(
+        context,
+        {
+            "kind": "mutation_proposal",
+            "stage": _stage_summary(stage),
+            "parent_artifact": aggregate_payload.get("_artifact_ref"),
+            "aggregate": aggregate,
+            "proposal": proposal.model_dump(mode="json"),
+            "proposal_hash": proposal.deterministic_hash(),
+        },
+        suffix=".mutation_proposal.json",
+    )
+    return StageResult(
+        artifacts=[artifact],
+        attributes={
+            "operation_count": len(proposal.operations),
+            "proposal_hash": proposal.deterministic_hash(),
+        },
+    )
+
+
+async def mutation_application_handler(stage: StageRecord, context: StageContext) -> StageResult:
+    """Apply a mutation proposal to the configured parent Actor genome."""
+
+    proposal_payload = await _load_single_parent_payload(stage, context, "mutation application")
+    proposal_data = proposal_payload.get("proposal") or {}
+    if not isinstance(proposal_data, dict):
+        raise StageExecutionError(
+            "mutation proposal artifact does not contain a proposal object",
+            retryable=False,
+            error_type="invalid_parent_artifact",
+        )
+    proposal = MutationProposal.model_validate(proposal_data)
+    application = apply_mutation_proposal(
+        proposal,
+        _actor_genome(stage),
+        child_genome_id=stage.metadata.get("child_genome_id"),
+    )
+    artifact = await _write_json_artifact(
+        context,
+        {
+            "kind": "mutation_application",
+            "stage": _stage_summary(stage),
+            "parent_artifact": proposal_payload.get("_artifact_ref"),
+            "proposal": proposal.model_dump(mode="json"),
+            "application": application.model_dump(mode="json"),
+            "application_hash": application.deterministic_hash(),
+        },
+        suffix=".mutation_application.json",
+    )
+    return StageResult(
+        artifacts=[artifact],
+        attributes={
+            "applied": application.applied,
+            "child_genome_id": application.child_genome_id,
+            "error_count": len(application.errors),
+        },
+    )
+
+
 def prompt_only_handlers() -> dict[str, Any]:
     return {
         "actor_theater_conversation": actor_theater_conversation_handler,
         "grader_eval": grader_eval_handler,
         "assessment_aggregate": assessment_aggregate_handler,
+        "mutation_proposal": mutation_proposal_handler,
+        "mutation_application": mutation_application_handler,
     }
 
 
@@ -321,6 +403,43 @@ async def hydrate_grader_parent(stage: StageRecord, context: StageContext) -> St
     )
 
 
+async def _load_single_parent_payload(
+    stage: StageRecord,
+    context: StageContext,
+    label: str,
+) -> dict[str, Any]:
+    if context.stage_store is None or context.artifact_store is None:
+        raise StageExecutionError(
+            f"{label} requires stage and artifact stores",
+            retryable=False,
+            error_type="missing_runtime_store",
+        )
+    if len(stage.parent_hashes) != 1:
+        raise StageExecutionError(
+            f"{label} requires exactly one parent",
+            retryable=False,
+            error_type="invalid_stage_config",
+        )
+
+    parent = await context.stage_store.get_stage_by_hash(stage.parent_hashes[0])
+    if parent is None or not parent.artifact_refs:
+        raise StageExecutionError(
+            f"{label} parent artifact is unavailable: {stage.parent_hashes[0]}",
+            retryable=True,
+            error_type="missing_parent_artifact",
+        )
+    artifact = parent.artifact_refs[0]
+    payload = json.loads((await context.artifact_store.get_bytes(artifact)).decode())
+    if not isinstance(payload, dict):
+        raise StageExecutionError(
+            f"{label} parent artifact is not a JSON object",
+            retryable=False,
+            error_type="invalid_parent_artifact",
+        )
+    payload["_artifact_ref"] = artifact.model_dump(mode="json")
+    return payload
+
+
 def _scenario(stage: StageRecord) -> dict[str, Any]:
     config_snapshot = stage.metadata.get("config_snapshot") or {}
     scenario = config_snapshot.get("scenario") or {}
@@ -365,6 +484,101 @@ def _disclosure_points_text(stage: StageRecord) -> str:
             )
         )
     return "\n".join(chunks)
+
+
+def _actor_genome(stage: StageRecord) -> dict[str, Any]:
+    config_snapshot = stage.metadata.get("config_snapshot") or {}
+    genome = config_snapshot.get("actor_genome") or {}
+    if not isinstance(genome, dict):
+        raise StageExecutionError(
+            "stage config snapshot does not contain actor_genome as a mapping",
+            retryable=False,
+            error_type="invalid_stage_config",
+        )
+    return genome
+
+
+def _actor_genome_id(stage: StageRecord) -> str:
+    config_snapshot = stage.metadata.get("config_snapshot") or {}
+    genome_id = config_snapshot.get("actor_genome_id")
+    if not genome_id:
+        raise StageExecutionError(
+            "stage config snapshot does not contain actor_genome_id",
+            retryable=False,
+            error_type="invalid_stage_config",
+        )
+    return str(genome_id)
+
+
+def _actor_id(stage: StageRecord) -> str | None:
+    config_snapshot = stage.metadata.get("config_snapshot") or {}
+    actor_id = config_snapshot.get("actor_id")
+    return str(actor_id) if actor_id is not None else None
+
+
+def _deterministic_prompt_mutation_proposal(
+    stage: StageRecord,
+    aggregate: dict[str, Any],
+    actor_genome: dict[str, Any],
+    actor_genome_id: str,
+) -> MutationProposal:
+    current_persona = _genome_persona(actor_genome)
+    weakest_points = _weakest_disclosure_points(aggregate)
+    focus_text = _mutation_focus_text(weakest_points)
+    mutated_persona = (
+        f"{current_persona.strip()}\n\n"
+        "Mutation note: In the next run, ask one concise follow-up at a time and "
+        f"prioritize extracting: {focus_text}."
+    )
+    return MutationProposal(
+        parent_genome_id=actor_genome_id,
+        target_agent_id=_actor_id(stage),
+        operator=MutationOperatorKind.HAND_AUTHORED,
+        operations=[
+            GenomePatchOperation(
+                op=GenomePatchOp.REPLACE,
+                path="/control_requests/persona_text/value",
+                value=mutated_persona,
+            )
+        ],
+        rationale=(
+            "Deterministic prompt-only baseline mutation from disclosure aggregate. "
+            f"Weakest disclosure targets: {focus_text}."
+        ),
+        assessment_refs=[stage.parent_hashes[0]] if stage.parent_hashes else [],
+        author={"kind": "deterministic_baseline", "stage_type": stage.stage_type},
+        metadata={
+            "rollout_index": stage.metadata.get("rollout_index"),
+            "conversation_hash": stage.metadata.get("conversation_hash"),
+        },
+    )
+
+
+def _genome_persona(actor_genome: dict[str, Any]) -> str:
+    value = ((actor_genome.get("control_requests") or {}).get("persona_text") or {}).get("value")
+    return str(value or "You are an Actor who asks careful, specific follow-up questions.")
+
+
+def _weakest_disclosure_points(aggregate: dict[str, Any]) -> list[dict[str, Any]]:
+    points = aggregate.get("disclosure_points") or []
+    if not isinstance(points, list):
+        return []
+    valid_points = [point for point in points if isinstance(point, dict)]
+    return sorted(
+        valid_points,
+        key=lambda point: (
+            float(point.get("mean_score", 0.0)),
+            float(point.get("partial_or_extracted_rate", 0.0)),
+            str(point.get("point_id", "")),
+        ),
+    )[:2]
+
+
+def _mutation_focus_text(points: list[dict[str, Any]]) -> str:
+    if not points:
+        return "the configured disclosure points"
+    labels = [str(point.get("label") or point.get("point_id")) for point in points]
+    return ", ".join(labels)
 
 
 def _conversation_turns(stage: StageRecord) -> int:

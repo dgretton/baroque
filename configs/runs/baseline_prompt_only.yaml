@@ -10,6 +10,7 @@ runs:
       purpose: "Minimal prompt-only Ollama vertical slice."
       rollout_replicates: 1
       assessment_replicates: 1
+      mutation_replicates: 1
 
 roles:
   actor:

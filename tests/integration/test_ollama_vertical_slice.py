@@ -48,7 +48,7 @@ def test_ollama_prompt_only_vertical_slice(tmp_path) -> None:
         stats = await runner.run_until_idle()
 
         completed = [await runtime.get_stage(record.stage_id) for record in seeded]
-        assert stats.succeeded == 3
+        assert stats.succeeded == 5
         assert all(record is not None for record in completed)
         assert all(record.status == StageStatus.SUCCEEDED for record in completed if record)
         assert all(record.artifact_refs for record in completed if record)
