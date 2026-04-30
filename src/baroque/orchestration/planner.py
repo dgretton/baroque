@@ -74,10 +74,20 @@ class StaticRunPlanner:
         actor_agents = self._agents_for_role(run.active_agent_sets, "actor")
         grader_agents = self._agents_for_role(run.active_agent_sets, "grader")
         scenario_ids = self._scenario_ids(run.active_scenario_sets)
+        rollout_replicates = self._positive_int(
+            run.metadata.get("rollout_replicates", 1),
+            "rollout_replicates",
+        )
+        assessment_replicates = self._positive_int(
+            run.metadata.get("assessment_replicates", 1),
+            "assessment_replicates",
+        )
 
         stages: list[StageSpec] = []
         for scenario_id in scenario_ids:
             scenario = self._require_key(self._config.scenarios, scenario_id, "scenario")
+            disclosure_points = self._disclosure_points_for_scenario(scenario)
+            theater_model_config = self._model_config_for_role("theater")
             for actor_id, actor in actor_agents.items():
                 actor_genome_id = self._first_genome_id(actor_id, actor)
                 actor_genome = self._require_key(self._config.genomes, actor_genome_id, "genome")
@@ -90,57 +100,73 @@ class StaticRunPlanner:
                         "genome",
                     )
                     grader_model_config = self._model_config_for_agent(grader)
-                    sample_id = self._sample_id(run_id, scenario_id, actor_id, grader_id)
+                    for rollout_index in range(rollout_replicates):
+                        sample_id = self._sample_id(
+                            run_id,
+                            scenario_id,
+                            actor_id,
+                            grader_id,
+                            rollout_index,
+                        )
 
-                    conversation = StageSpec(
-                        stage_type="actor_theater_conversation",
-                        run_id=run_id,
-                        sample_id=sample_id,
-                        config_snapshot={
-                            "capability_profile": run.capability_profile,
-                            "topology": run.topology,
-                            "scenario_id": scenario_id,
-                            "scenario": scenario.model_dump(mode="json"),
-                            "actor_id": actor_id,
-                            "actor": actor.model_dump(mode="json"),
-                            "actor_genome_id": actor_genome_id,
-                            "actor_genome": actor_genome.model_dump(mode="json"),
-                        },
-                        requested_controls=actor_genome.control_requests,
-                        metadata={
-                            "role": "actor",
-                            "agent_id": actor_id,
-                            "genome_id": actor_genome_id,
-                            "scenario_id": scenario_id,
-                            "model_config": actor_model_config,
-                        },
-                    )
-                    grader_eval = StageSpec(
-                        stage_type="grader_eval",
-                        run_id=run_id,
-                        sample_id=sample_id,
-                        parent_hashes=[conversation.deterministic_hash()],
-                        config_snapshot={
-                            "capability_profile": run.capability_profile,
-                            "topology": run.topology,
-                            "scenario_id": scenario_id,
-                            "scenario": scenario.model_dump(mode="json"),
-                            "grader_id": grader_id,
-                            "grader": grader.model_dump(mode="json"),
-                            "grader_genome_id": grader_genome_id,
-                            "grader_genome": grader_genome.model_dump(mode="json"),
-                        },
-                        requested_controls=grader_genome.control_requests,
-                        metadata={
-                            "role": "grader",
-                            "agent_id": grader_id,
-                            "genome_id": grader_genome_id,
-                            "scenario_id": scenario_id,
-                            "conversation_hash": conversation.deterministic_hash(),
-                            "model_config": grader_model_config,
-                        },
-                    )
-                    stages.extend([conversation, grader_eval])
+                        conversation = StageSpec(
+                            stage_type="actor_theater_conversation",
+                            run_id=run_id,
+                            sample_id=sample_id,
+                            config_snapshot={
+                                "capability_profile": run.capability_profile,
+                                "topology": run.topology,
+                                "scenario_id": scenario_id,
+                                "scenario": scenario.model_dump(mode="json"),
+                                "actor_id": actor_id,
+                                "actor": actor.model_dump(mode="json"),
+                                "actor_genome_id": actor_genome_id,
+                                "actor_genome": actor_genome.model_dump(mode="json"),
+                            },
+                            requested_controls=actor_genome.control_requests,
+                            metadata={
+                                "role": "actor",
+                                "agent_id": actor_id,
+                                "genome_id": actor_genome_id,
+                                "scenario_id": scenario_id,
+                                "rollout_index": rollout_index,
+                                "conversation_turns": scenario.conversation_turns,
+                                "model_config": actor_model_config,
+                                "actor_model_config": actor_model_config,
+                                "theater_model_config": theater_model_config,
+                            },
+                        )
+                        stages.append(conversation)
+                        for assessment_index in range(assessment_replicates):
+                            grader_eval = StageSpec(
+                                stage_type="grader_eval",
+                                run_id=run_id,
+                                sample_id=sample_id,
+                                parent_hashes=[conversation.deterministic_hash()],
+                                config_snapshot={
+                                    "capability_profile": run.capability_profile,
+                                    "topology": run.topology,
+                                    "scenario_id": scenario_id,
+                                    "scenario": scenario.model_dump(mode="json"),
+                                    "disclosure_points": disclosure_points,
+                                    "grader_id": grader_id,
+                                    "grader": grader.model_dump(mode="json"),
+                                    "grader_genome_id": grader_genome_id,
+                                    "grader_genome": grader_genome.model_dump(mode="json"),
+                                },
+                                requested_controls=grader_genome.control_requests,
+                                metadata={
+                                    "role": "grader",
+                                    "agent_id": grader_id,
+                                    "genome_id": grader_genome_id,
+                                    "scenario_id": scenario_id,
+                                    "rollout_index": rollout_index,
+                                    "assessment_index": assessment_index,
+                                    "conversation_hash": conversation.deterministic_hash(),
+                                    "model_config": grader_model_config,
+                                },
+                            )
+                            stages.append(grader_eval)
         return stages
 
     def _agents_for_role(
@@ -173,10 +199,13 @@ class StaticRunPlanner:
         return scenario_ids
 
     def _model_config_for_agent(self, agent: AgentConfig) -> dict[str, Any]:
-        role_config = self._require_key(self._config.roles, agent.role, "role")
+        return self._model_config_for_role(agent.role)
+
+    def _model_config_for_role(self, role: str) -> dict[str, Any]:
+        role_config = self._require_key(self._config.roles, role, "role")
         model_pool_id = role_config.default_model_pool
         if model_pool_id is None:
-            raise ValueError(f"role has no default model pool: {agent.role}")
+            raise ValueError(f"role has no default model pool: {role}")
         model_pool = self._require_key(self._config.model_pools, model_pool_id, "model pool")
         if not model_pool.models:
             raise ValueError(f"model pool has no models: {model_pool_id}")
@@ -199,6 +228,23 @@ class StaticRunPlanner:
             },
         }
 
+    def _disclosure_points_for_scenario(self, scenario: Any) -> list[dict[str, Any]]:
+        points: list[dict[str, Any]] = []
+        for point_set_id in scenario.disclosure_point_sets:
+            point_set = self._require_key(
+                self._config.disclosure_point_sets,
+                point_set_id,
+                "disclosure point set",
+            )
+            for point_id in point_set.get("disclosure_points", []):
+                point = self._require_key(
+                    self._config.disclosure_points,
+                    point_id,
+                    "disclosure point",
+                )
+                points.append({"id": point_id, **point.model_dump(mode="json")})
+        return points
+
     @staticmethod
     def _first_genome_id(agent_id: str, agent: AgentConfig) -> str:
         if not agent.genomes:
@@ -206,16 +252,30 @@ class StaticRunPlanner:
         return agent.genomes[0]
 
     @staticmethod
-    def _sample_id(run_id: str, scenario_id: str, actor_id: str, grader_id: str) -> str:
+    def _sample_id(
+        run_id: str,
+        scenario_id: str,
+        actor_id: str,
+        grader_id: str,
+        rollout_index: int,
+    ) -> str:
         hash_value = content_hash(
             {
                 "run_id": run_id,
                 "scenario_id": scenario_id,
                 "actor_id": actor_id,
                 "grader_id": grader_id,
+                "rollout_index": rollout_index,
             }
         )
         return "sample-" + hash_value.split(":", maxsplit=1)[1][:16]
+
+    @staticmethod
+    def _positive_int(value: Any, label: str) -> int:
+        parsed = int(value)
+        if parsed < 1:
+            raise ValueError(f"{label} must be at least 1")
+        return parsed
 
     @staticmethod
     def _require_role(topology: TopologyGraph, role: str) -> None:

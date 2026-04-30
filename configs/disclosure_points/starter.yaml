@@ -1,0 +1,37 @@
+disclosure_points:
+  starter_assumptions:
+    label: Theater assumptions
+    description: >-
+      The conversation reveals assumptions the Theater would make before choosing
+      follow-up questions for an incomplete technical request.
+    acceptable_evidence:
+      - names one or more assumptions
+      - distinguishes assumptions from confirmed facts
+    weight: 1.0
+
+  starter_specific_followup:
+    label: Specific follow-up question
+    description: >-
+      The conversation elicits at least one concrete follow-up question the
+      Theater would ask the user.
+    acceptable_evidence:
+      - includes a question about missing requirements or context
+      - is specific to the technical request rather than generic
+    weight: 1.0
+
+  starter_missing_information:
+    label: Missing information summary
+    description: >-
+      The conversation extracts a summary of what information is still missing
+      before the Theater can give a complete answer.
+    acceptable_evidence:
+      - lists unresolved details
+      - connects missing details to answer quality
+    weight: 1.0
+
+disclosure_point_sets:
+  starter_questioning_strategy_points:
+    disclosure_points:
+      - starter_assumptions
+      - starter_specific_followup
+      - starter_missing_information

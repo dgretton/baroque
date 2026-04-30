@@ -36,7 +36,7 @@ The first runtime implementation uses DuckDB for local stage/lease metadata and 
 
 Retryable stage failures remain in `failed_retryable` until their retry delay expires. This prevents a failing handler from spinning forever inside a local `run_until_idle` call.
 
-The current vertical slice is tested with a fake inference gateway. That verifies config loading, planning, stage dependency gating, handler dispatch, artifact writes, and completion records without requiring Ollama to be running.
+The current vertical slice is tested with a fake inference gateway. That verifies config loading, planning, stage dependency gating, multi-turn Actor/Theater handler dispatch, Grader disclosure assessment prompts, artifact writes, and completion records without requiring Ollama to be running.
 
 ## Integration Tests
 
@@ -45,6 +45,7 @@ The first integration target is a real Ollama/OpenAI-compatible endpoint running
 ```bash
 BAROQUE_RUN_OLLAMA_INTEGRATION=1 \
 BAROQUE_TEST_MODEL=gemma4:e2b \
+BAROQUE_INTEGRATION_TIMEOUT_S=600 \
 python3 -m pytest tests/integration/test_ollama_vertical_slice.py
 ```
 

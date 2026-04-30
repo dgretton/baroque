@@ -45,8 +45,10 @@ Do not introduce systems languages early. They may become useful for a high-thro
 ```text
 configs/
   capability_profiles/   # allowed control surfaces
+  disclosure_points/     # extraction targets and reusable point sets
   models/                # endpoints, models, and model pools
   runs/                  # run-level experiment definitions
+  scenarios/             # prompt/objective/turn-count definitions
   storage/               # local/cloud storage profiles
   topologies/            # role interaction/evaluation graphs
 
@@ -99,6 +101,15 @@ The scaffold includes:
 
 The first runner and prompt-only vertical slice now stand on this foundation. The implementation is still intentionally narrow, but the core nouns and interfaces are live code rather than a paper scaffold.
 
+The current executable slice is:
+
+1. plan one or more Actor-Theater rollout stages from plural config
+2. run a multi-turn Actor/Theater conversation for each rollout
+3. write the full transcript as a content-addressed artifact
+4. plan one or more Grader assessment stages per rollout
+5. hydrate each Grader from the parent transcript artifact
+6. ask the Grader to judge configured disclosure points and return parseable JSON
+
 ## Current Implementation Status
 
 Implemented:
@@ -111,7 +122,10 @@ Implemented:
 - DuckDB runtime store with stage insertion, claiming, heartbeats, completion, retryable/terminal failures, and expired-lease reclaim
 - async stage runner with handler registry, bounded concurrency, heartbeats, retryable/terminal failure handling, and structured event emission
 - static baseline planner that creates Actor-Theater conversation and Grader evaluation stages from config
-- prompt-only Actor-Theater and Grader handlers
+- prompt-only multi-turn Actor-Theater and Grader handlers
+- YAML-configured disclosure points and disclosure point sets
+- scenario-level conversation turn counts
+- run-level rollout and assessment replicate counts
 - child-stage artifact hydration from parent artifacts for the Grader path
 - mocked end-to-end vertical slice through planner, runtime store, runner, handlers, fake gateway, and artifacts
 - skipped-by-default Ollama integration test for the prompt-only vertical slice
@@ -120,7 +134,6 @@ Implemented:
 
 Not yet implemented:
 
-- successful Ollama-backed smoke run in this development environment
 - DuckDB analysis exports
 - graceful shutdown orchestration
 - container profiles

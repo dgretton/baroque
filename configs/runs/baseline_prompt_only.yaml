@@ -8,6 +8,8 @@ runs:
     storage_profile: local_dev
     metadata:
       purpose: "Minimal prompt-only Ollama vertical slice."
+      rollout_replicates: 1
+      assessment_replicates: 1
 
 roles:
   actor:
@@ -50,4 +52,3 @@ genomes:
         value: "You are a Grader who evaluates relevance, completeness, and factual care."
       plain_output_instructions:
         value: "Return JSON with rating and justification fields."
-

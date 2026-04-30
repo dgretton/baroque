@@ -32,7 +32,7 @@ def test_ollama_prompt_only_vertical_slice(tmp_path) -> None:
         runtime = DuckDBRuntimeStore(tmp_path / "runtime.duckdb")
         artifacts = LocalArtifactStore(tmp_path / "artifacts")
         gateway = OpenAICompatibleGateway(
-            timeout_s=float(os.environ.get("BAROQUE_INTEGRATION_TIMEOUT_S", "180"))
+            timeout_s=float(os.environ.get("BAROQUE_INTEGRATION_TIMEOUT_S", "600"))
         )
         planner = StaticRunPlanner(config)
 

@@ -15,6 +15,7 @@ In practice:
 - Store `capability_profiles`, not one global execution mode.
 - Store `control_requests` and `effective_controls`, not just the final prompt.
 - Store `topologies`, `scenarios`, `rankers`, `judges`, and `mutation_operators` as named config objects.
+- Store `disclosure_points` and `disclosure_point_sets`, not an assessment rubric embedded in a prompt.
 
 Defaults are still useful, but they should fill in missing plural settings rather than erase the plural shape.
 
@@ -35,6 +36,7 @@ That means a sample should be able to answer:
 - Which controls were compiled into the provider request?
 - Which controls were dropped because the runtime did not support them?
 - Which topology and ranking method evaluated it?
+- Which disclosure points were scored, and which configured evidence criteria did the evaluator see?
 
 If the schema starts singular, these questions become retrofits. If the schema starts plural, a "one Actor, one Theater, one Ollama model" run is just the smallest case.
 
@@ -241,6 +243,28 @@ agent_sets:
   baseline_agents:
     agents: [actor_a, grader_a]
 
+disclosure_points:
+  starter_assumptions:
+    label: Theater assumptions
+    description: The conversation reveals assumptions the Theater would make.
+    acceptable_evidence:
+      - names one or more assumptions
+      - distinguishes assumptions from confirmed facts
+    weight: 1.0
+
+disclosure_point_sets:
+  starter_questioning_strategy_points:
+    disclosure_points: [starter_assumptions]
+
+scenarios:
+  starter_questioning_strategy:
+    prompt: The Theater should explain how it chooses follow-up questions.
+    objectives:
+      - extract assumptions
+      - extract missing information
+    disclosure_point_sets: [starter_questioning_strategy_points]
+    conversation_turns: 2
+
 genomes:
   actor_a_seed:
     control_requests:
@@ -253,6 +277,11 @@ genomes:
 ```
 
 This is intentionally more plural than the first implementation needs. The first runner can validate only the subset it understands, while the schema remains ready for multiple agents, model pools, endpoints, and genomes.
+
+The first executable planner uses `conversation_turns`, `disclosure_point_sets`,
+`rollout_replicates`, and `assessment_replicates`. Those are deliberately stored
+as plural or per-scenario/per-run fields so later experiments can vary rollout
+counts, assessor counts, and target rubrics without changing the stage model.
 
 ## Dynamic Changes During A Run
 

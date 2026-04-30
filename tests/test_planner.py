@@ -19,6 +19,10 @@ def test_static_run_planner_creates_conversation_then_grader_stage() -> None:
     assert conversation.metadata["role"] == "actor"
     assert grader.metadata["role"] == "grader"
     assert conversation.metadata["model_config"]["model"] == "gemma4:e2b"
+    assert conversation.metadata["theater_model_config"]["model"] == "gemma4:e2b"
+    assert conversation.metadata["conversation_turns"] == 2
+    assert grader.metadata["assessment_index"] == 0
+    assert grader.config_snapshot["disclosure_points"][0]["id"] == "starter_assumptions"
 
 
 def test_static_run_planner_is_deterministic() -> None:
@@ -30,6 +34,33 @@ def test_static_run_planner_is_deterministic() -> None:
 
     assert [stage.deterministic_hash() for stage in first] == [
         stage.deterministic_hash() for stage in second
+    ]
+
+
+def test_static_run_planner_honors_replicate_counts() -> None:
+    config = load_project_config_dir("configs")
+    config.runs["baseline_prompt_only"].metadata["rollout_replicates"] = 2
+    config.runs["baseline_prompt_only"].metadata["assessment_replicates"] = 2
+    planner = StaticRunPlanner(config)
+
+    stages = planner.plan_missing_stages("baseline_prompt_only")
+
+    assert [stage.stage_type for stage in stages] == [
+        "actor_theater_conversation",
+        "grader_eval",
+        "grader_eval",
+        "actor_theater_conversation",
+        "grader_eval",
+        "grader_eval",
+    ]
+    assert [stage.metadata["rollout_index"] for stage in stages] == [0, 0, 0, 1, 1, 1]
+    assert [stage.metadata.get("assessment_index") for stage in stages] == [
+        None,
+        0,
+        1,
+        None,
+        0,
+        1,
     ]
 
 
