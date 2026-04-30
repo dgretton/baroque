@@ -80,7 +80,7 @@ Important details:
 - Store request snapshots, not just responses.
 - Do not let in-memory queues be the only source of truth.
 - Prefer append-only event records plus derived views.
-- Either enqueue downstream stages at completion time or seed dependent stages up front and let parent-hash claim gating control eligibility. The current local implementation seeds the first Actor-Theater and Grader stages up front and uses parent-hash gating in DuckDB.
+- Either enqueue downstream stages at completion time or seed dependent stages up front and let parent-hash claim gating control eligibility. The current local implementation seeds per-turn Actor/Theater stages, transcript assembly, Grader, aggregation, and mutation stages up front and uses parent-hash gating in DuckDB.
 
 ## Graceful Shutdown
 

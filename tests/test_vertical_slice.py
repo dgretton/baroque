@@ -41,7 +41,7 @@ def test_prompt_only_vertical_slice_runs_seeded_stages(tmp_path) -> None:
         stats = await runner.run_until_idle()
 
         completed = [await runtime.get_stage(record.stage_id) for record in seeded]
-        assert stats.succeeded == 5
+        assert stats.succeeded == 9
         assert len(gateway.requests) == 5
         assert all(record is not None for record in completed)
         assert all(record.status == StageStatus.SUCCEEDED for record in completed if record)

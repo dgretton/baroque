@@ -113,10 +113,73 @@ class StaticRunPlanner:
                             rollout_index,
                         )
 
-                        conversation = StageSpec(
-                            stage_type="actor_theater_conversation",
+                        turn_hashes: list[str] = []
+                        previous_theater_hash: str | None = None
+                        for turn_index in range(scenario.conversation_turns):
+                            actor_turn = StageSpec(
+                                stage_type="actor_turn",
+                                run_id=run_id,
+                                sample_id=sample_id,
+                                parent_hashes=(
+                                    [previous_theater_hash] if previous_theater_hash else []
+                                ),
+                                config_snapshot={
+                                    "capability_profile": run.capability_profile,
+                                    "topology": run.topology,
+                                    "scenario_id": scenario_id,
+                                    "scenario": scenario.model_dump(mode="json"),
+                                    "actor_id": actor_id,
+                                    "actor": actor.model_dump(mode="json"),
+                                    "actor_genome_id": actor_genome_id,
+                                    "actor_genome": actor_genome.model_dump(mode="json"),
+                                },
+                                requested_controls=actor_genome.control_requests,
+                                metadata={
+                                    "role": "actor",
+                                    "agent_id": actor_id,
+                                    "genome_id": actor_genome_id,
+                                    "scenario_id": scenario_id,
+                                    "rollout_index": rollout_index,
+                                    "turn_index": turn_index,
+                                    "conversation_turns": scenario.conversation_turns,
+                                    "model_config": actor_model_config,
+                                    "actor_model_config": actor_model_config,
+                                },
+                            )
+                            stages.append(actor_turn)
+                            turn_hashes.append(actor_turn.deterministic_hash())
+
+                            theater_turn = StageSpec(
+                                stage_type="theater_turn",
+                                run_id=run_id,
+                                sample_id=sample_id,
+                                parent_hashes=[actor_turn.deterministic_hash()],
+                                config_snapshot={
+                                    "capability_profile": run.capability_profile,
+                                    "topology": run.topology,
+                                    "scenario_id": scenario_id,
+                                    "scenario": scenario.model_dump(mode="json"),
+                                },
+                                metadata={
+                                    "role": "theater",
+                                    "scenario_id": scenario_id,
+                                    "rollout_index": rollout_index,
+                                    "turn_index": turn_index,
+                                    "conversation_turns": scenario.conversation_turns,
+                                    "actor_turn_hash": actor_turn.deterministic_hash(),
+                                    "model_config": theater_model_config,
+                                    "theater_model_config": theater_model_config,
+                                },
+                            )
+                            stages.append(theater_turn)
+                            turn_hashes.append(theater_turn.deterministic_hash())
+                            previous_theater_hash = theater_turn.deterministic_hash()
+
+                        conversation_transcript = StageSpec(
+                            stage_type="conversation_transcript",
                             run_id=run_id,
                             sample_id=sample_id,
+                            parent_hashes=turn_hashes,
                             config_snapshot={
                                 "capability_profile": run.capability_profile,
                                 "topology": run.topology,
@@ -127,27 +190,24 @@ class StaticRunPlanner:
                                 "actor_genome_id": actor_genome_id,
                                 "actor_genome": actor_genome.model_dump(mode="json"),
                             },
-                            requested_controls=actor_genome.control_requests,
                             metadata={
-                                "role": "actor",
+                                "role": "conversation_builder",
                                 "agent_id": actor_id,
                                 "genome_id": actor_genome_id,
                                 "scenario_id": scenario_id,
                                 "rollout_index": rollout_index,
                                 "conversation_turns": scenario.conversation_turns,
-                                "model_config": actor_model_config,
-                                "actor_model_config": actor_model_config,
-                                "theater_model_config": theater_model_config,
                             },
                         )
-                        stages.append(conversation)
+                        stages.append(conversation_transcript)
+                        conversation_hash = conversation_transcript.deterministic_hash()
                         grader_hashes: list[str] = []
                         for assessment_index in range(assessment_replicates):
                             grader_eval = StageSpec(
                                 stage_type="grader_eval",
                                 run_id=run_id,
                                 sample_id=sample_id,
-                                parent_hashes=[conversation.deterministic_hash()],
+                                parent_hashes=[conversation_hash],
                                 config_snapshot={
                                     "capability_profile": run.capability_profile,
                                     "topology": run.topology,
@@ -167,7 +227,7 @@ class StaticRunPlanner:
                                     "scenario_id": scenario_id,
                                     "rollout_index": rollout_index,
                                     "assessment_index": assessment_index,
-                                    "conversation_hash": conversation.deterministic_hash(),
+                                    "conversation_hash": conversation_hash,
                                     "model_config": grader_model_config,
                                 },
                             )
@@ -199,7 +259,7 @@ class StaticRunPlanner:
                                 "scenario_id": scenario_id,
                                 "rollout_index": rollout_index,
                                 "assessment_count": assessment_replicates,
-                                "conversation_hash": conversation.deterministic_hash(),
+                                "conversation_hash": conversation_hash,
                             },
                         )
                         stages.append(assessment_aggregate)
@@ -229,7 +289,7 @@ class StaticRunPlanner:
                                     "scenario_id": scenario_id,
                                     "rollout_index": rollout_index,
                                     "mutation_index": mutation_index,
-                                    "conversation_hash": conversation.deterministic_hash(),
+                                    "conversation_hash": conversation_hash,
                                     "assessment_aggregate_hash": (
                                         assessment_aggregate.deterministic_hash()
                                     ),
@@ -258,7 +318,7 @@ class StaticRunPlanner:
                                     "scenario_id": scenario_id,
                                     "rollout_index": rollout_index,
                                     "mutation_index": mutation_index,
-                                    "conversation_hash": conversation.deterministic_hash(),
+                                    "conversation_hash": conversation_hash,
                                     "mutation_proposal_hash": (
                                         mutation_proposal.deterministic_hash()
                                     ),

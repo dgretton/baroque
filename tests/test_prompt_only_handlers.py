@@ -2,11 +2,13 @@ import asyncio
 import json
 
 from baroque.agents.prompt_only import (
-    actor_theater_conversation_handler,
+    actor_turn_handler,
     assessment_aggregate_handler,
+    conversation_transcript_handler,
     grader_eval_handler,
     mutation_application_handler,
     mutation_proposal_handler,
+    theater_turn_handler,
 )
 from baroque.core.models import ProviderRequest, ProviderResponse, StageRecord, StageSpec
 from baroque.orchestration.handlers import StageContext
@@ -29,12 +31,12 @@ class FakeGateway:
         )
 
 
-def test_actor_theater_conversation_handler_writes_artifact(tmp_path) -> None:
+def test_actor_turn_handler_writes_one_model_call_artifact(tmp_path) -> None:
     async def scenario() -> None:
-        gateway = FakeGateway()
+        gateway = FakeGateway(["What assumptions matter?"])
         store = LocalArtifactStore(tmp_path)
-        stage = _stage("actor_theater_conversation")
-        result = await actor_theater_conversation_handler(
+        stage = _stage("actor_turn", metadata={"turn_index": 0})
+        result = await actor_turn_handler(
             stage,
             StageContext(
                 runner_id="runner-1",
@@ -44,15 +46,109 @@ def test_actor_theater_conversation_handler_writes_artifact(tmp_path) -> None:
         )
 
         assert len(result.artifacts) == 1
-        assert len(gateway.requests) == 4
+        assert len(gateway.requests) == 1
         assert gateway.requests[0].messages[0].role == "system"
         assert gateway.requests[0].metadata["role"] == "actor"
-        assert gateway.requests[1].metadata["role"] == "theater"
         assert "Ask exactly one concise question" in str(gateway.requests[0].messages[-1].content)
 
         artifact = json.loads((await store.get_bytes(result.artifacts[0])).decode())
-        assert len(artifact["turns"]) == 2
-        assert "Turn 1 Actor" in artifact["response"]["text"]
+        assert artifact["kind"] == "actor_turn"
+        assert artifact["question"] == "What assumptions matter?"
+        assert artifact["turn_index"] == 0
+
+    asyncio.run(scenario())
+
+
+def test_theater_turn_handler_hydrates_actor_question(tmp_path) -> None:
+    async def scenario() -> None:
+        gateway = FakeGateway(["The Theater should name assumptions."])
+        store = LocalArtifactStore(tmp_path / "artifacts")
+        runtime = DuckDBRuntimeStore(tmp_path / "runtime.duckdb")
+
+        actor_spec = _stage_spec("actor_turn", metadata={"turn_index": 0})
+        actor_parent = await runtime.add_stage(actor_spec)
+        claimed_actor = await runtime.claim_next_stage("runner-1")
+        assert claimed_actor is not None
+        actor_artifact = await store.put_bytes(
+            json.dumps(
+                {
+                    "kind": "actor_turn",
+                    "turn_index": 0,
+                    "question": "What assumptions matter?",
+                    "transcript_before": "",
+                }
+            ).encode(),
+            media_type="application/json",
+            suffix=".json",
+        )
+        await runtime.complete_stage(claimed_actor.stage_id, "runner-1", [actor_artifact])
+
+        stage = _stage("theater_turn", metadata={"turn_index": 0}).model_copy(
+            update={"parent_hashes": [actor_parent.content_hash]}
+        )
+        result = await theater_turn_handler(
+            stage,
+            StageContext(
+                runner_id="runner-1",
+                artifact_store=store,
+                inference_gateway=gateway,
+                stage_store=runtime,
+            ),
+        )
+
+        assert len(gateway.requests) == 1
+        assert gateway.requests[0].metadata["role"] == "theater"
+        assert "What assumptions matter?" in str(gateway.requests[0].messages[-1].content)
+        artifact = json.loads((await store.get_bytes(result.artifacts[0])).decode())
+        assert artifact["kind"] == "theater_turn"
+        assert "Turn 1 Actor: What assumptions matter?" in artifact["transcript_text"]
+        assert "Turn 1 Theater: The Theater should name assumptions." in artifact["transcript_text"]
+
+    asyncio.run(scenario())
+
+
+def test_conversation_transcript_handler_assembles_turn_artifacts(tmp_path) -> None:
+    async def scenario() -> None:
+        store = LocalArtifactStore(tmp_path / "artifacts")
+        runtime = DuckDBRuntimeStore(tmp_path / "runtime.duckdb")
+
+        actor = await _completed_parent_stage(
+            runtime,
+            store,
+            "actor_turn",
+            b'{"kind":"actor_turn","turn_index":0,"question":"What assumptions matter?"}',
+        )
+        theater = await _completed_parent_stage(
+            runtime,
+            store,
+            "theater_turn",
+            json.dumps(
+                {
+                    "kind": "theater_turn",
+                    "turn_index": 0,
+                    "actor_question": "What assumptions matter?",
+                    "answer": "Name assumptions.",
+                }
+            ).encode(),
+        )
+
+        stage = _stage("conversation_transcript").model_copy(
+            update={"parent_hashes": [actor.content_hash, theater.content_hash]}
+        )
+        result = await conversation_transcript_handler(
+            stage,
+            StageContext(
+                runner_id="runner-1",
+                artifact_store=store,
+                stage_store=runtime,
+            ),
+        )
+
+        artifact = json.loads((await store.get_bytes(result.artifacts[0])).decode())
+        assert artifact["kind"] == "actor_theater_conversation"
+        assert artifact["turns"][0]["actor"]["question"] == "What assumptions matter?"
+        assert artifact["turns"][0]["theater"]["answer"] == "Name assumptions."
+        assert "Turn 1 Theater: Name assumptions." in artifact["response"]["text"]
 
     asyncio.run(scenario())
 
@@ -106,7 +202,7 @@ def test_grader_eval_handler_hydrates_parent_conversation(tmp_path) -> None:
         store = LocalArtifactStore(tmp_path / "artifacts")
         runtime = DuckDBRuntimeStore(tmp_path / "runtime.duckdb")
 
-        parent_spec = StageSpec(stage_type="actor_theater_conversation", run_id="run-1")
+        parent_spec = StageSpec(stage_type="conversation_transcript", run_id="run-1")
         parent = await runtime.add_stage(parent_spec)
         claimed_parent = await runtime.claim_next_stage("runner-1")
         assert claimed_parent is not None
@@ -311,6 +407,21 @@ def test_mutation_application_handler_writes_child_genome(tmp_path) -> None:
         )
 
     asyncio.run(scenario())
+
+
+async def _completed_parent_stage(
+    runtime: DuckDBRuntimeStore,
+    store: LocalArtifactStore,
+    stage_type: str,
+    payload: bytes,
+) -> StageRecord:
+    spec = StageSpec(stage_type=stage_type, run_id="run-1")
+    parent = await runtime.add_stage(spec)
+    claimed = await runtime.claim_next_stage("runner-1")
+    assert claimed is not None
+    artifact = await store.put_bytes(payload, media_type="application/json", suffix=".json")
+    await runtime.complete_stage(claimed.stage_id, "runner-1", [artifact])
+    return parent
 
 
 def _stage(stage_type: str, metadata: dict | None = None) -> StageRecord:

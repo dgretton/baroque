@@ -22,50 +22,107 @@ from baroque.ranking.assessments import (
 )
 
 
-async def actor_theater_conversation_handler(
+async def actor_turn_handler(
     stage: StageRecord,
     context: StageContext,
 ) -> StageResult:
-    """Run a prompt-only multi-turn Actor-Theater conversation."""
+    """Run one prompt-only Actor question stage."""
 
-    turns: list[dict[str, Any]] = []
-    for turn_index in range(_conversation_turns(stage)):
-        actor_request = _provider_request_from_stage(
-            stage,
-            user_content=_actor_question_content(stage, turns, turn_index),
-            model_config=(
-                stage.metadata.get("actor_model_config") or stage.metadata.get("model_config")
-            ),
-            persona_text=_actor_persona(stage),
-            role="actor",
-        )
-        actor_response = await _send(context, actor_request)
-        actor_question = (actor_response.text or "").strip()
+    previous_transcript = await _previous_transcript(stage, context, "actor turn")
+    turn_index = _turn_index(stage)
+    actor_request = _provider_request_from_stage(
+        stage,
+        user_content=_actor_question_content(stage, previous_transcript, turn_index),
+        model_config=stage.metadata.get("actor_model_config") or stage.metadata.get("model_config"),
+        persona_text=_actor_persona(stage),
+        role="actor",
+    )
+    actor_response = await _send(context, actor_request)
+    actor_question = (actor_response.text or "").strip()
+    artifact = await _write_json_artifact(
+        context,
+        {
+            "kind": "actor_turn",
+            "stage": _stage_summary(stage),
+            "turn_index": turn_index,
+            "transcript_before": previous_transcript,
+            "question": actor_question,
+            "request": actor_request.model_dump(mode="json", exclude={"api_key"}),
+            "response": actor_response.model_dump(mode="json"),
+        },
+        suffix=".actor_turn.json",
+    )
+    return StageResult(
+        artifacts=[artifact],
+        attributes={
+            "turn_index": turn_index,
+            "question_text_chars": len(actor_question),
+            "response_text_chars": len(actor_response.text or ""),
+        },
+    )
 
-        theater_request = _provider_request_from_stage(
-            stage,
-            user_content=_theater_answer_content(stage, turns, actor_question),
-            model_config=stage.metadata.get("theater_model_config"),
-            persona_text=_theater_persona(),
-            role="theater",
-        )
-        theater_response = await _send(context, theater_request)
-        turns.append(
-            {
-                "turn_index": turn_index,
-                "actor": {
-                    "question": actor_question,
-                    "request": actor_request.model_dump(mode="json", exclude={"api_key"}),
-                    "response": actor_response.model_dump(mode="json"),
-                },
-                "theater": {
-                    "answer": (theater_response.text or "").strip(),
-                    "request": theater_request.model_dump(mode="json", exclude={"api_key"}),
-                    "response": theater_response.model_dump(mode="json"),
-                },
-            }
-        )
 
+async def theater_turn_handler(stage: StageRecord, context: StageContext) -> StageResult:
+    """Run one prompt-only Theater answer stage."""
+
+    actor_payload = await _load_single_parent_payload(stage, context, "theater turn")
+    turn_index = _turn_index(stage)
+    previous_transcript = str(actor_payload.get("transcript_before") or "")
+    actor_question = str(actor_payload.get("question") or "").strip()
+    theater_request = _provider_request_from_stage(
+        stage,
+        user_content=_theater_answer_content(stage, previous_transcript, actor_question),
+        model_config=(
+            stage.metadata.get("theater_model_config") or stage.metadata.get("model_config")
+        ),
+        persona_text=_theater_persona(),
+        role="theater",
+    )
+    theater_response = await _send(context, theater_request)
+    theater_answer = (theater_response.text or "").strip()
+    transcript_text = _append_turn_transcript(
+        previous_transcript,
+        turn_index,
+        actor_question,
+        theater_answer,
+    )
+    artifact = await _write_json_artifact(
+        context,
+        {
+            "kind": "theater_turn",
+            "stage": _stage_summary(stage),
+            "turn_index": turn_index,
+            "transcript_before": previous_transcript,
+            "transcript_text": transcript_text,
+            "actor_artifact": actor_payload.get("_artifact_ref"),
+            "actor_question": actor_question,
+            "answer": theater_answer,
+            "request": theater_request.model_dump(mode="json", exclude={"api_key"}),
+            "response": theater_response.model_dump(mode="json"),
+        },
+        suffix=".theater_turn.json",
+    )
+    return StageResult(
+        artifacts=[artifact],
+        attributes={
+            "turn_index": turn_index,
+            "answer_text_chars": len(theater_answer),
+            "transcript_text_chars": len(transcript_text),
+        },
+    )
+
+
+async def conversation_transcript_handler(
+    stage: StageRecord,
+    context: StageContext,
+) -> StageResult:
+    """Assemble one Actor-Theater transcript from completed per-call stages."""
+
+    parent_payloads = [
+        await _load_parent_payload(parent_hash, context, "conversation transcript")
+        for parent_hash in stage.parent_hashes
+    ]
+    turns = _turns_from_parent_payloads(parent_payloads)
     transcript_text = _transcript_text(turns)
     artifact = await _write_json_artifact(
         context,
@@ -253,7 +310,9 @@ async def mutation_application_handler(stage: StageRecord, context: StageContext
 
 def prompt_only_handlers() -> dict[str, Any]:
     return {
-        "actor_theater_conversation": actor_theater_conversation_handler,
+        "actor_turn": actor_turn_handler,
+        "theater_turn": theater_turn_handler,
+        "conversation_transcript": conversation_transcript_handler,
         "grader_eval": grader_eval_handler,
         "assessment_aggregate": assessment_aggregate_handler,
         "mutation_proposal": mutation_proposal_handler,
@@ -328,13 +387,13 @@ async def _write_json_artifact(
 
 def _actor_question_content(
     stage: StageRecord,
-    turns: list[dict[str, Any]],
+    transcript_text: str,
     turn_index: int,
 ) -> str:
     scenario = _scenario(stage)
     objectives = scenario.get("objectives") or []
     objective_text = "\n".join(f"- {objective}" for objective in objectives)
-    transcript = _transcript_text(turns) if turns else "No prior turns."
+    transcript = transcript_text if transcript_text else "No prior turns."
     return (
         "You are the Actor. Interrogate the Theater for the scenario below. "
         "Ask exactly one concise question for this turn. Use prior answers to "
@@ -348,11 +407,11 @@ def _actor_question_content(
 
 def _theater_answer_content(
     stage: StageRecord,
-    turns: list[dict[str, Any]],
+    transcript_text: str,
     actor_question: str,
 ) -> str:
     scenario = _scenario(stage)
-    transcript = _transcript_text(turns) if turns else "No prior turns."
+    transcript = transcript_text if transcript_text else "No prior turns."
     return (
         "You are the Theater, the model being interrogated. Answer the Actor's "
         "latest question for the scenario below. Be direct and informative.\n\n"
@@ -408,23 +467,31 @@ async def _load_single_parent_payload(
     context: StageContext,
     label: str,
 ) -> dict[str, Any]:
-    if context.stage_store is None or context.artifact_store is None:
-        raise StageExecutionError(
-            f"{label} requires stage and artifact stores",
-            retryable=False,
-            error_type="missing_runtime_store",
-        )
     if len(stage.parent_hashes) != 1:
         raise StageExecutionError(
             f"{label} requires exactly one parent",
             retryable=False,
             error_type="invalid_stage_config",
         )
+    return await _load_parent_payload(stage.parent_hashes[0], context, label)
 
-    parent = await context.stage_store.get_stage_by_hash(stage.parent_hashes[0])
+
+async def _load_parent_payload(
+    parent_hash: str,
+    context: StageContext,
+    label: str,
+) -> dict[str, Any]:
+    if context.stage_store is None or context.artifact_store is None:
+        raise StageExecutionError(
+            f"{label} requires stage and artifact stores",
+            retryable=False,
+            error_type="missing_runtime_store",
+        )
+
+    parent = await context.stage_store.get_stage_by_hash(parent_hash)
     if parent is None or not parent.artifact_refs:
         raise StageExecutionError(
-            f"{label} parent artifact is unavailable: {stage.parent_hashes[0]}",
+            f"{label} parent artifact is unavailable: {parent_hash}",
             retryable=True,
             error_type="missing_parent_artifact",
         )
@@ -438,6 +505,18 @@ async def _load_single_parent_payload(
         )
     payload["_artifact_ref"] = artifact.model_dump(mode="json")
     return payload
+
+
+async def _previous_transcript(
+    stage: StageRecord,
+    context: StageContext,
+    label: str,
+) -> str:
+    if not stage.parent_hashes:
+        return ""
+    payload = await _load_single_parent_payload(stage, context, label)
+    response_text = ((payload.get("response") or {}).get("text")) or ""
+    return str(payload.get("transcript_text") or response_text)
 
 
 def _scenario(stage: StageRecord) -> dict[str, Any]:
@@ -579,6 +658,69 @@ def _mutation_focus_text(points: list[dict[str, Any]]) -> str:
         return "the configured disclosure points"
     labels = [str(point.get("label") or point.get("point_id")) for point in points]
     return ", ".join(labels)
+
+
+def _turn_index(stage: StageRecord) -> int:
+    raw_turn = stage.metadata.get("turn_index")
+    if raw_turn is None:
+        raise StageExecutionError(
+            "turn stage metadata does not contain turn_index",
+            retryable=False,
+            error_type="invalid_stage_config",
+        )
+    try:
+        turn_index = int(raw_turn)
+    except (TypeError, ValueError) as exc:
+        raise StageExecutionError(
+            "turn_index must be an integer",
+            retryable=False,
+            error_type="invalid_stage_config",
+        ) from exc
+    if turn_index < 0:
+        raise StageExecutionError(
+            "turn_index must be nonnegative",
+            retryable=False,
+            error_type="invalid_stage_config",
+        )
+    return turn_index
+
+
+def _append_turn_transcript(
+    previous_transcript: str,
+    turn_index: int,
+    actor_question: str,
+    theater_answer: str,
+) -> str:
+    prior = previous_transcript.strip()
+    current = "\n".join(
+        [
+            f"Turn {turn_index + 1} Actor: {actor_question}",
+            f"Turn {turn_index + 1} Theater: {theater_answer}",
+        ]
+    )
+    return f"{prior}\n{current}" if prior else current
+
+
+def _turns_from_parent_payloads(parent_payloads: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    turns_by_index: dict[int, dict[str, Any]] = {}
+    for payload in parent_payloads:
+        raw_turn_index = payload.get("turn_index")
+        if raw_turn_index is None:
+            continue
+        turn_index = int(raw_turn_index)
+        turn = turns_by_index.setdefault(turn_index, {"turn_index": turn_index})
+        if payload.get("kind") == "actor_turn":
+            turn["actor"] = {
+                "question": str(payload.get("question") or ""),
+                "artifact": payload.get("_artifact_ref"),
+            }
+        elif payload.get("kind") == "theater_turn":
+            turn.setdefault("actor", {"question": str(payload.get("actor_question") or "")})
+            turn["theater"] = {
+                "answer": str(payload.get("answer") or ""),
+                "artifact": payload.get("_artifact_ref"),
+            }
+    return [turns_by_index[index] for index in sorted(turns_by_index)]
 
 
 def _conversation_turns(stage: StageRecord) -> int:

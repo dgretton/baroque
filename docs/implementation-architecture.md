@@ -103,10 +103,10 @@ The first runner and prompt-only vertical slice now stand on this foundation. Th
 
 The current executable slice is:
 
-1. plan one or more Actor-Theater rollout stages from plural config
-2. run a multi-turn Actor/Theater conversation for each rollout
-3. write the full transcript as a content-addressed artifact
-4. plan one or more Grader assessment stages per rollout
+1. plan one Actor turn stage and one Theater turn stage per conversation turn
+2. persist every Actor/Theater model call as its own content-addressed artifact
+3. assemble completed turn artifacts into a transcript artifact
+4. plan one or more Grader assessment stages per transcript
 5. hydrate each Grader from the parent transcript artifact
 6. ask the Grader to judge configured disclosure points and return parseable JSON
 7. aggregate plural assessments into rollout-level disclosure statistics
@@ -124,8 +124,8 @@ Implemented:
 - local filesystem artifact storage
 - DuckDB runtime store with stage insertion, claiming, heartbeats, completion, retryable/terminal failures, and expired-lease reclaim
 - async stage runner with handler registry, bounded concurrency, heartbeats, retryable/terminal failure handling, and structured event emission
-- static baseline planner that creates conversation, assessment, aggregation, mutation proposal, and mutation application stages from config
-- prompt-only multi-turn Actor-Theater, Grader, aggregation, and mutation handlers
+- static baseline planner that creates per-turn Actor/Theater calls, transcript, assessment, aggregation, mutation proposal, and mutation application stages from config
+- prompt-only Actor turn, Theater turn, transcript, Grader, aggregation, and mutation handlers
 - typed assessment records and rollout-level assessment aggregates
 - executable typed mutation proposal/application records with deterministic genome patch application
 - YAML-configured disclosure points and disclosure point sets
