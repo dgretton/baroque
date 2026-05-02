@@ -7,8 +7,12 @@ def test_default_configs_load() -> None:
     assert "baseline_prompt_only" in config.runs
     assert "prompt_only_ollama" in config.capability_profiles
     assert "gemma4_e2b" in config.models
+    assert "deterministic_prompt_baseline" in config.mutation_operators
     assert "starter_questioning_strategy" in config.scenarios
     assert config.runs["baseline_prompt_only"].topology == "actor_theater_grader"
+    assert config.runs["baseline_prompt_only"].active_mutation_operators == [
+        "deterministic_prompt_baseline"
+    ]
     assert config.runtime_endpoints["local_ollama"].base_url == "http://localhost:11434/v1"
 
 

@@ -5,6 +5,7 @@ runs:
     active_agent_sets: [baseline_agents]
     active_scenario_sets: [starter_scenarios]
     active_rankers: [absolute_rating_debug]
+    active_mutation_operators: [deterministic_prompt_baseline]
     storage_profile: local_dev
     metadata:
       purpose: "Minimal prompt-only Ollama vertical slice."

@@ -63,6 +63,14 @@ class GenomeConfig(FlexibleModel):
     parent_genomes: list[str] = Field(default_factory=list)
 
 
+class MutationOperatorConfig(FlexibleModel):
+    kind: str = "hand_authored"
+    implementation: str
+    target_role: str = "actor"
+    enabled: bool = True
+    config: dict[str, Any] = Field(default_factory=dict)
+
+
 class DisclosurePointConfig(FlexibleModel):
     label: str
     description: str
@@ -90,6 +98,7 @@ class RunConfig(FlexibleModel):
     active_agent_sets: list[str] = Field(default_factory=list)
     active_scenario_sets: list[str] = Field(default_factory=list)
     active_rankers: list[str] = Field(default_factory=list)
+    active_mutation_operators: list[str] = Field(default_factory=list)
     storage_profile: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -103,6 +112,7 @@ class ProjectConfig(FlexibleModel):
     agents: dict[str, AgentConfig] = Field(default_factory=dict)
     agent_sets: dict[str, dict[str, list[str]]] = Field(default_factory=dict)
     genomes: dict[str, GenomeConfig] = Field(default_factory=dict)
+    mutation_operators: dict[str, MutationOperatorConfig] = Field(default_factory=dict)
     disclosure_points: dict[str, DisclosurePointConfig] = Field(default_factory=dict)
     disclosure_point_sets: dict[str, dict[str, list[str]]] = Field(default_factory=dict)
     scenarios: dict[str, ScenarioConfig] = Field(default_factory=dict)

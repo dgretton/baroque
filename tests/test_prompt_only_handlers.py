@@ -389,7 +389,12 @@ def test_mutation_proposal_handler_writes_prompt_patch(tmp_path) -> None:
 
         artifact = json.loads((await store.get_bytes(result.artifacts[0])).decode())
         operation = artifact["proposal"]["operations"][0]
+        assert artifact["mutation_operator"]["id"] == "deterministic_prompt_baseline"
+        assert artifact["mutation_operator"]["implementation"] == "deterministic_prompt_baseline"
         assert artifact["proposal"]["operator"] == "hand_authored"
+        assert artifact["proposal"]["metadata"]["mutation_operator_id"] == (
+            "deterministic_prompt_baseline"
+        )
         assert operation["path"] == "/control_requests/persona_text/value"
         assert "Missing information" in operation["value"]
 
@@ -518,5 +523,16 @@ def _mutation_config_snapshot() -> dict:
                 "persona_text": {"value": "You are an Actor who asks careful questions."}
             },
             "parent_genomes": [],
+        },
+        "mutation_operator_id": "deterministic_prompt_baseline",
+        "mutation_operator": {
+            "kind": "hand_authored",
+            "implementation": "deterministic_prompt_baseline",
+            "target_role": "actor",
+            "enabled": True,
+            "config": {
+                "focus_point_count": 2,
+                "patch_path": "/control_requests/persona_text/value",
+            },
         },
     }

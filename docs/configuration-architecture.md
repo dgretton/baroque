@@ -292,10 +292,11 @@ genomes:
 This is intentionally more plural than the first implementation needs. The first runner can validate only the subset it understands, while the schema remains ready for multiple agents, model pools, endpoints, and genomes.
 
 The first executable planner uses `conversation_turns`, `disclosure_point_sets`,
-`rollout_replicates`, `assessment_replicates`, and `mutation_replicates`. Those
-are deliberately stored as plural or per-scenario/per-run fields so later
-experiments can vary rollout counts, assessor counts, target rubrics, and
-mutation fan-out without changing the stage model.
+`rollout_replicates`, `assessment_replicates`, `mutation_replicates`, and
+`active_mutation_operators`. Those are deliberately stored as plural or
+per-scenario/per-run fields so later experiments can vary rollout counts,
+assessor counts, target rubrics, and mutation fan-out without changing the stage
+model.
 
 Mutation records should likewise remain plural and typed. A mutation proposal
 stores the parent genome, target agent, operator kind, assessment references,
@@ -303,8 +304,9 @@ rationale, author metadata, and a list of patch operations. A mutation
 application stores the proposal hash, parent and child genome IDs, resulting
 genome payload, and any errors. This keeps agent-authored edits, random sampling,
 crossover, and future non-prompt controls comparable under one durable shape.
-The current prompt-only path uses a deterministic baseline mutation proposal so
-lineage and restartable artifacts exist before LLM-authored edits are enabled.
+The current prompt-only path uses a configured deterministic baseline mutation
+operator so lineage and restartable artifacts exist before LLM-authored edits
+are enabled.
 
 ## Dynamic Changes During A Run
 

@@ -86,6 +86,7 @@ class StaticRunPlanner:
             run.metadata.get("mutation_replicates", 1),
             "mutation_replicates",
         )
+        mutation_operator_ids = self._mutation_operator_ids(run.active_mutation_operators)
         capability_profile_snapshot = self._capability_profile_snapshot(run.capability_profile)
 
         stages: list[StageSpec] = []
@@ -310,70 +311,95 @@ class StaticRunPlanner:
                             },
                         )
                         stages.append(assessment_aggregate)
-                        for mutation_index in range(mutation_replicates):
-                            mutation_proposal = StageSpec(
-                                stage_type="mutation_proposal",
-                                run_id=run_id,
-                                sample_id=sample_id,
-                                parent_hashes=[assessment_aggregate.deterministic_hash()],
-                                config_snapshot={
-                                    "capability_profile": run.capability_profile,
-                                    "capability_profile_snapshot": capability_profile_snapshot,
-                                    "topology": run.topology,
-                                    "scenario_id": scenario_id,
-                                    "scenario": scenario.model_dump(mode="json"),
-                                    "disclosure_points": disclosure_points,
-                                    "actor_id": actor_id,
-                                    "actor": actor.model_dump(mode="json"),
-                                    "actor_genome_id": actor_genome_id,
-                                    "actor_genome": actor_genome.model_dump(mode="json"),
-                                    "grader_id": grader_id,
-                                    "grader": grader.model_dump(mode="json"),
-                                    "grader_genome_id": grader_genome_id,
-                                    "grader_genome": grader_genome.model_dump(mode="json"),
-                                },
-                                metadata={
-                                    "role": "mutator",
-                                    "scenario_id": scenario_id,
-                                    "rollout_index": rollout_index,
-                                    "mutation_index": mutation_index,
-                                    "conversation_hash": conversation_hash,
-                                    "assessment_aggregate_hash": (
-                                        assessment_aggregate.deterministic_hash()
-                                    ),
-                                    "operator": "deterministic_prompt_baseline",
-                                },
+                        for mutation_operator_id in mutation_operator_ids:
+                            mutation_operator = self._require_key(
+                                self._config.mutation_operators,
+                                mutation_operator_id,
+                                "mutation operator",
                             )
-                            stages.append(mutation_proposal)
-                            mutation_application = StageSpec(
-                                stage_type="mutation_application",
-                                run_id=run_id,
-                                sample_id=sample_id,
-                                parent_hashes=[mutation_proposal.deterministic_hash()],
-                                config_snapshot={
-                                    "capability_profile": run.capability_profile,
-                                    "capability_profile_snapshot": capability_profile_snapshot,
-                                    "topology": run.topology,
-                                    "scenario_id": scenario_id,
-                                    "scenario": scenario.model_dump(mode="json"),
-                                    "disclosure_points": disclosure_points,
-                                    "actor_id": actor_id,
-                                    "actor": actor.model_dump(mode="json"),
-                                    "actor_genome_id": actor_genome_id,
-                                    "actor_genome": actor_genome.model_dump(mode="json"),
-                                },
-                                metadata={
-                                    "role": "mutation_applicator",
-                                    "scenario_id": scenario_id,
-                                    "rollout_index": rollout_index,
-                                    "mutation_index": mutation_index,
-                                    "conversation_hash": conversation_hash,
-                                    "mutation_proposal_hash": (
-                                        mutation_proposal.deterministic_hash()
-                                    ),
-                                },
-                            )
-                            stages.append(mutation_application)
+                            if not mutation_operator.enabled:
+                                continue
+                            for mutation_index in range(mutation_replicates):
+                                mutation_proposal = StageSpec(
+                                    stage_type="mutation_proposal",
+                                    run_id=run_id,
+                                    sample_id=sample_id,
+                                    parent_hashes=[assessment_aggregate.deterministic_hash()],
+                                    config_snapshot={
+                                        "capability_profile": run.capability_profile,
+                                        "capability_profile_snapshot": capability_profile_snapshot,
+                                        "topology": run.topology,
+                                        "scenario_id": scenario_id,
+                                        "scenario": scenario.model_dump(mode="json"),
+                                        "disclosure_points": disclosure_points,
+                                        "actor_id": actor_id,
+                                        "actor": actor.model_dump(mode="json"),
+                                        "actor_genome_id": actor_genome_id,
+                                        "actor_genome": actor_genome.model_dump(mode="json"),
+                                        "grader_id": grader_id,
+                                        "grader": grader.model_dump(mode="json"),
+                                        "grader_genome_id": grader_genome_id,
+                                        "grader_genome": grader_genome.model_dump(mode="json"),
+                                        "mutation_operator_id": mutation_operator_id,
+                                        "mutation_operator": mutation_operator.model_dump(
+                                            mode="json"
+                                        ),
+                                    },
+                                    metadata={
+                                        "role": "mutator",
+                                        "scenario_id": scenario_id,
+                                        "rollout_index": rollout_index,
+                                        "mutation_index": mutation_index,
+                                        "mutation_operator_id": mutation_operator_id,
+                                        "operator": mutation_operator.kind,
+                                        "operator_implementation": (
+                                            mutation_operator.implementation
+                                        ),
+                                        "conversation_hash": conversation_hash,
+                                        "assessment_aggregate_hash": (
+                                            assessment_aggregate.deterministic_hash()
+                                        ),
+                                    },
+                                )
+                                stages.append(mutation_proposal)
+                                mutation_application = StageSpec(
+                                    stage_type="mutation_application",
+                                    run_id=run_id,
+                                    sample_id=sample_id,
+                                    parent_hashes=[mutation_proposal.deterministic_hash()],
+                                    config_snapshot={
+                                        "capability_profile": run.capability_profile,
+                                        "capability_profile_snapshot": capability_profile_snapshot,
+                                        "topology": run.topology,
+                                        "scenario_id": scenario_id,
+                                        "scenario": scenario.model_dump(mode="json"),
+                                        "disclosure_points": disclosure_points,
+                                        "actor_id": actor_id,
+                                        "actor": actor.model_dump(mode="json"),
+                                        "actor_genome_id": actor_genome_id,
+                                        "actor_genome": actor_genome.model_dump(mode="json"),
+                                        "mutation_operator_id": mutation_operator_id,
+                                        "mutation_operator": mutation_operator.model_dump(
+                                            mode="json"
+                                        ),
+                                    },
+                                    metadata={
+                                        "role": "mutation_applicator",
+                                        "scenario_id": scenario_id,
+                                        "rollout_index": rollout_index,
+                                        "mutation_index": mutation_index,
+                                        "mutation_operator_id": mutation_operator_id,
+                                        "operator": mutation_operator.kind,
+                                        "operator_implementation": (
+                                            mutation_operator.implementation
+                                        ),
+                                        "conversation_hash": conversation_hash,
+                                        "mutation_proposal_hash": (
+                                            mutation_proposal.deterministic_hash()
+                                        ),
+                                    },
+                                )
+                                stages.append(mutation_application)
         return stages
 
     def _agents_for_role(
@@ -404,6 +430,12 @@ class StaticRunPlanner:
         if not scenario_ids:
             raise ValueError("run has no scenarios")
         return scenario_ids
+
+    def _mutation_operator_ids(self, active_operator_ids: list[str]) -> list[str]:
+        operator_ids = active_operator_ids or ["deterministic_prompt_baseline"]
+        for operator_id in operator_ids:
+            self._require_key(self._config.mutation_operators, operator_id, "mutation operator")
+        return operator_ids
 
     def _capability_profile_snapshot(
         self,

@@ -236,17 +236,19 @@ async def assessment_aggregate_handler(stage: StageRecord, context: StageContext
 
 
 async def mutation_proposal_handler(stage: StageRecord, context: StageContext) -> StageResult:
-    """Propose a deterministic prompt-only mutation from assessment evidence."""
+    """Propose a configured mutation from assessment evidence."""
 
     aggregate_payload = await _load_single_parent_payload(stage, context, "mutation proposal")
     aggregate = aggregate_payload.get("aggregate") or {}
     actor_genome = _actor_genome(stage)
     actor_genome_id = _actor_genome_id(stage)
-    proposal = _deterministic_prompt_mutation_proposal(
+    mutation_operator = _mutation_operator(stage)
+    proposal = _mutation_proposal_for_operator(
         stage,
         aggregate,
         actor_genome,
         actor_genome_id,
+        mutation_operator,
     )
     artifact = await _write_json_artifact(
         context,
@@ -255,6 +257,7 @@ async def mutation_proposal_handler(stage: StageRecord, context: StageContext) -
             "stage": _stage_summary(stage),
             "parent_artifact": aggregate_payload.get("_artifact_ref"),
             "aggregate": aggregate,
+            "mutation_operator": mutation_operator,
             "proposal": proposal.model_dump(mode="json"),
             "proposal_hash": proposal.deterministic_hash(),
         },
@@ -265,6 +268,8 @@ async def mutation_proposal_handler(stage: StageRecord, context: StageContext) -
         attributes={
             "operation_count": len(proposal.operations),
             "proposal_hash": proposal.deterministic_hash(),
+            "mutation_operator_id": mutation_operator.get("id"),
+            "operator_implementation": mutation_operator.get("implementation"),
         },
     )
 
@@ -602,28 +607,87 @@ def _actor_id(stage: StageRecord) -> str | None:
     return str(actor_id) if actor_id is not None else None
 
 
+def _mutation_operator(stage: StageRecord) -> dict[str, Any]:
+    config_snapshot = stage.metadata.get("config_snapshot") or {}
+    operator = config_snapshot.get("mutation_operator") or {}
+    if not isinstance(operator, dict):
+        raise StageExecutionError(
+            "stage config snapshot does not contain mutation_operator as a mapping",
+            retryable=False,
+            error_type="invalid_stage_config",
+        )
+    operator_id = config_snapshot.get("mutation_operator_id") or stage.metadata.get(
+        "mutation_operator_id",
+        "deterministic_prompt_baseline",
+    )
+    return {"id": str(operator_id), **operator}
+
+
+def _mutation_proposal_for_operator(
+    stage: StageRecord,
+    aggregate: dict[str, Any],
+    actor_genome: dict[str, Any],
+    actor_genome_id: str,
+    mutation_operator: dict[str, Any],
+) -> MutationProposal:
+    implementation = str(
+        mutation_operator.get("implementation")
+        or stage.metadata.get("operator_implementation")
+        or "deterministic_prompt_baseline"
+    )
+    if implementation == "deterministic_prompt_baseline":
+        return _deterministic_prompt_mutation_proposal(
+            stage,
+            aggregate,
+            actor_genome,
+            actor_genome_id,
+            mutation_operator,
+        )
+    raise StageExecutionError(
+        f"unsupported mutation operator implementation: {implementation}",
+        retryable=False,
+        error_type="unsupported_mutation_operator",
+    )
+
+
 def _deterministic_prompt_mutation_proposal(
     stage: StageRecord,
     aggregate: dict[str, Any],
     actor_genome: dict[str, Any],
     actor_genome_id: str,
+    mutation_operator: dict[str, Any],
 ) -> MutationProposal:
+    operator_config = mutation_operator.get("config") or {}
     current_persona = _genome_persona(actor_genome)
-    weakest_points = _weakest_disclosure_points(aggregate)
+    focus_point_count = int(operator_config.get("focus_point_count", 2))
+    weakest_points = _weakest_disclosure_points(aggregate, limit=focus_point_count)
     focus_text = _mutation_focus_text(weakest_points)
     mutated_persona = (
         f"{current_persona.strip()}\n\n"
         "Mutation note: In the next run, ask one concise follow-up at a time and "
         f"prioritize extracting: {focus_text}."
     )
+    try:
+        operator_kind = MutationOperatorKind(str(mutation_operator.get("kind") or "hand_authored"))
+    except ValueError as exc:
+        raise StageExecutionError(
+            f"unsupported mutation operator kind: {mutation_operator.get('kind')}",
+            retryable=False,
+            error_type="unsupported_mutation_operator",
+        ) from exc
     return MutationProposal(
         parent_genome_id=actor_genome_id,
         target_agent_id=_actor_id(stage),
-        operator=MutationOperatorKind.HAND_AUTHORED,
+        operator=operator_kind,
         operations=[
             GenomePatchOperation(
                 op=GenomePatchOp.REPLACE,
-                path="/control_requests/persona_text/value",
+                path=str(
+                    operator_config.get(
+                        "patch_path",
+                        "/control_requests/persona_text/value",
+                    )
+                ),
                 value=mutated_persona,
             )
         ],
@@ -634,6 +698,8 @@ def _deterministic_prompt_mutation_proposal(
         assessment_refs=[stage.parent_hashes[0]] if stage.parent_hashes else [],
         author={"kind": "deterministic_baseline", "stage_type": stage.stage_type},
         metadata={
+            "mutation_operator_id": mutation_operator.get("id"),
+            "operator_implementation": mutation_operator.get("implementation"),
             "rollout_index": stage.metadata.get("rollout_index"),
             "conversation_hash": stage.metadata.get("conversation_hash"),
         },
@@ -645,7 +711,11 @@ def _genome_persona(actor_genome: dict[str, Any]) -> str:
     return str(value or "You are an Actor who asks careful, specific follow-up questions.")
 
 
-def _weakest_disclosure_points(aggregate: dict[str, Any]) -> list[dict[str, Any]]:
+def _weakest_disclosure_points(
+    aggregate: dict[str, Any],
+    *,
+    limit: int = 2,
+) -> list[dict[str, Any]]:
     points = aggregate.get("disclosure_points") or []
     if not isinstance(points, list):
         return []
@@ -657,7 +727,7 @@ def _weakest_disclosure_points(aggregate: dict[str, Any]) -> list[dict[str, Any]
             float(point.get("partial_or_extracted_rate", 0.0)),
             str(point.get("point_id", "")),
         ),
-    )[:2]
+    )[:limit]
 
 
 def _mutation_focus_text(points: list[dict[str, Any]]) -> str:

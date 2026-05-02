@@ -1,0 +1,9 @@
+mutation_operators:
+  deterministic_prompt_baseline:
+    kind: hand_authored
+    implementation: deterministic_prompt_baseline
+    target_role: actor
+    enabled: true
+    config:
+      focus_point_count: 2
+      patch_path: /control_requests/persona_text/value

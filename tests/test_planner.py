@@ -56,6 +56,12 @@ def test_static_run_planner_creates_conversation_then_grader_stage() -> None:
     assert aggregate.metadata["role"] == "assessment_aggregator"
     assert mutation_proposal.metadata["role"] == "mutator"
     assert mutation_application.metadata["role"] == "mutation_applicator"
+    assert mutation_proposal.metadata["mutation_operator_id"] == "deterministic_prompt_baseline"
+    assert mutation_proposal.metadata["operator"] == "hand_authored"
+    assert mutation_proposal.metadata["operator_implementation"] == "deterministic_prompt_baseline"
+    mutation_operator_config = mutation_proposal.config_snapshot["mutation_operator"]["config"]
+    assert mutation_operator_config["focus_point_count"] == 2
+    assert mutation_application.metadata["mutation_operator_id"] == "deterministic_prompt_baseline"
     model_pool = config.model_pools["small_local_gemma"]
     actor_model_config = actor_0.metadata["model_config"]
     theater_model_config = theater_0.metadata["theater_model_config"]
@@ -136,6 +142,31 @@ def test_static_run_planner_honors_replicate_counts() -> None:
     ]
     assert stages[8].parent_hashes == [stages[7].deterministic_hash()]
     assert stages[9].parent_hashes == [stages[8].deterministic_hash()]
+
+
+def test_static_run_planner_fans_out_active_mutation_operators() -> None:
+    config = load_project_config_dir("configs")
+    config.mutation_operators["deterministic_prompt_variant"] = config.mutation_operators[
+        "deterministic_prompt_baseline"
+    ].model_copy(update={"config": {"focus_point_count": 1}})
+    config.runs["baseline_prompt_only"].active_mutation_operators = [
+        "deterministic_prompt_baseline",
+        "deterministic_prompt_variant",
+    ]
+    planner = StaticRunPlanner(config)
+
+    stages = planner.plan_missing_stages("baseline_prompt_only")
+
+    mutation_proposals = [
+        stage for stage in stages if stage.stage_type == "mutation_proposal"
+    ]
+    assert [stage.metadata["mutation_operator_id"] for stage in mutation_proposals] == [
+        "deterministic_prompt_baseline",
+        "deterministic_prompt_variant",
+    ]
+    assert mutation_proposals[1].config_snapshot["mutation_operator"]["config"] == {
+        "focus_point_count": 1
+    }
 
 
 def test_static_run_planner_honors_weighted_model_and_endpoint_selection() -> None:
