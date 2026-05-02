@@ -56,8 +56,20 @@ def test_static_run_planner_creates_conversation_then_grader_stage() -> None:
     assert aggregate.metadata["role"] == "assessment_aggregator"
     assert mutation_proposal.metadata["role"] == "mutator"
     assert mutation_application.metadata["role"] == "mutation_applicator"
-    assert actor_0.metadata["model_config"]["model"] == "gemma4:e2b"
-    assert theater_0.metadata["theater_model_config"]["model"] == "gemma4:e2b"
+    model_pool = config.model_pools["small_local_gemma"]
+    actor_model_config = actor_0.metadata["model_config"]
+    theater_model_config = theater_0.metadata["theater_model_config"]
+    assert actor_model_config["model_id"] in model_pool.models
+    assert actor_model_config["model"] in {"gemma4:e2b", "gemma4:e4b"}
+    assert actor_model_config["model_selection"]["candidate_ids"] == model_pool.models
+    assert actor_model_config["model_selection"]["selected_id"] == actor_model_config["model_id"]
+    assert actor_model_config["model_selection"]["selector_context"]["stage_type"] == "actor_turn"
+    assert theater_model_config["model_id"] in model_pool.models
+    assert theater_model_config["model_selection"]["selector_context"]["stage_type"] == (
+        "theater_turn"
+    )
+    assert theater_model_config["endpoint"]["id"] == "local_ollama"
+    assert theater_model_config["endpoint"]["endpoint_selection"]["selected_id"] == "local_ollama"
     assert conversation.metadata["conversation_turns"] == 2
     assert grader.metadata["assessment_index"] == 0
     assert grader.config_snapshot["disclosure_points"][0]["id"] == "starter_assumptions"
@@ -117,6 +129,42 @@ def test_static_run_planner_honors_replicate_counts() -> None:
     assert stages[9].parent_hashes == [stages[8].deterministic_hash()]
 
 
+def test_static_run_planner_honors_weighted_model_and_endpoint_selection() -> None:
+    config = load_project_config_dir("configs")
+    config.runtime_endpoints["backup_ollama"] = config.runtime_endpoints[
+        "local_ollama"
+    ].model_copy(update={"base_url": "http://backup.local:11434/v1"})
+    config.models["gemma4_e4b"].endpoint_pool = ["local_ollama", "backup_ollama"]
+    config.models["gemma4_e4b"].endpoint_selection = "weighted_random"
+    config.models["gemma4_e4b"].endpoint_weights = {
+        "local_ollama": 0,
+        "backup_ollama": 1,
+    }
+    config.model_pools["small_local_gemma"].selection = "weighted_random"
+    config.model_pools["small_local_gemma"].weights = {
+        "gemma4_e2b": 0,
+        "gemma4_e4b": 1,
+    }
+    planner = StaticRunPlanner(config)
+
+    stages = planner.plan_missing_stages("baseline_prompt_only")
+
+    for stage in _llm_stages(stages):
+        model_config = stage.metadata["model_config"]
+        assert model_config["model_id"] == "gemma4_e4b"
+        assert model_config["model"] == "gemma4:e4b"
+        assert model_config["model_selection"]["strategy"] == "weighted_random"
+        assert model_config["model_selection"]["selected_id"] == "gemma4_e4b"
+        assert model_config["model_selection"]["weights"] == {
+            "gemma4_e2b": 0.0,
+            "gemma4_e4b": 1.0,
+        }
+        assert model_config["endpoint"]["id"] == "backup_ollama"
+        assert model_config["endpoint"]["endpoint_selection"]["selected_id"] == (
+            "backup_ollama"
+        )
+
+
 def test_static_run_planner_seeds_runtime_store(tmp_path) -> None:
     import asyncio
 
@@ -134,3 +182,11 @@ def test_static_run_planner_seeds_runtime_store(tmp_path) -> None:
         ]
 
     asyncio.run(scenario())
+
+
+def _llm_stages(stages):
+    return [
+        stage
+        for stage in stages
+        if stage.stage_type in {"actor_turn", "theater_turn", "grader_eval"}
+    ]

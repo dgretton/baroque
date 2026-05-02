@@ -25,6 +25,8 @@ class RuntimeEndpoint(FlexibleModel):
 
 class ModelSpec(FlexibleModel):
     endpoint_pool: list[str]
+    endpoint_selection: str = "sampled"
+    endpoint_weights: dict[str, float] = Field(default_factory=dict)
     model: str
     context_window: int | None = None
     capability_tags: list[str] = Field(default_factory=list)

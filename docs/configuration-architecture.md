@@ -201,20 +201,32 @@ runtime_endpoints:
 models:
   gemma4_e2b:
     endpoint_pool: [local_ollama, linux_ollama]
+    endpoint_selection: sampled
     model: gemma4:e2b
     capability_tags: [chat, text, image, audio, thinking]
 
   gemma4_e4b:
     endpoint_pool: [local_ollama, linux_ollama]
+    endpoint_selection: weighted_random
+    endpoint_weights:
+      local_ollama: 1
+      linux_ollama: 2
     model: gemma4:e4b
     capability_tags: [chat, text, image, audio, thinking]
 
 model_pools:
   small_local_gemma:
     models: [gemma4_e2b, gemma4_e4b]
+    selection: sampled
 
   workstation_gemma:
     models: [gemma4_e2b, gemma4_e4b, gemma4_26b, gemma4_31b]
+    selection: weighted_random
+    weights:
+      gemma4_e2b: 1
+      gemma4_e4b: 2
+      gemma4_26b: 2
+      gemma4_31b: 1
 
 roles:
   actor:

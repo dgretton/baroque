@@ -139,6 +139,13 @@ Start simple:
 2. Let the runner's queue choose the model per role call.
 3. Keep every model choice in the sample record.
 
+The executable planner should treat selection as deterministic sampling from
+configuration, not as a runtime accident. Each LLM-call stage records the model
+pool, candidate model IDs, selected model ID, endpoint candidates, selected
+endpoint ID, strategy, weights when relevant, and draw hash. That keeps reruns
+reproducible while still letting Theater, Actor, and Grader calls vary by
+sample, turn, or assessment replicate.
+
 When multiple providers or endpoints appear, put LiteLLM in front:
 
 - LiteLLM provides one OpenAI-format interface across many providers.

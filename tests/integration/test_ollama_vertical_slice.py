@@ -25,9 +25,14 @@ pytestmark = [
 def test_ollama_prompt_only_vertical_slice(tmp_path) -> None:
     async def scenario() -> None:
         config = load_project_config_dir("configs")
+        test_model_id = os.environ.get("BAROQUE_TEST_MODEL_ID", "gemma4_e2b")
         test_model = os.environ.get("BAROQUE_TEST_MODEL")
         if test_model:
-            config.models["gemma4_e2b"].model = test_model
+            config.models[test_model_id].model = test_model
+        for model_pool in config.model_pools.values():
+            model_pool.models = [test_model_id]
+            model_pool.selection = "first"
+            model_pool.weights = {}
 
         runtime = DuckDBRuntimeStore(tmp_path / "runtime.duckdb")
         artifacts = LocalArtifactStore(tmp_path / "artifacts")

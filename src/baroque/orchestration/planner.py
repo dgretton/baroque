@@ -91,11 +91,9 @@ class StaticRunPlanner:
         for scenario_id in scenario_ids:
             scenario = self._require_key(self._config.scenarios, scenario_id, "scenario")
             disclosure_points = self._disclosure_points_for_scenario(scenario)
-            theater_model_config = self._model_config_for_role("theater")
             for actor_id, actor in actor_agents.items():
                 actor_genome_id = self._first_genome_id(actor_id, actor)
                 actor_genome = self._require_key(self._config.genomes, actor_genome_id, "genome")
-                actor_model_config = self._model_config_for_agent(actor)
                 for grader_id, grader in grader_agents.items():
                     grader_genome_id = self._first_genome_id(grader_id, grader)
                     grader_genome = self._require_key(
@@ -103,7 +101,6 @@ class StaticRunPlanner:
                         grader_genome_id,
                         "genome",
                     )
-                    grader_model_config = self._model_config_for_agent(grader)
                     for rollout_index in range(rollout_replicates):
                         sample_id = self._sample_id(
                             run_id,
@@ -116,6 +113,20 @@ class StaticRunPlanner:
                         turn_hashes: list[str] = []
                         previous_theater_hash: str | None = None
                         for turn_index in range(scenario.conversation_turns):
+                            actor_model_config = self._model_config_for_agent(
+                                actor,
+                                selector_context={
+                                    "run_id": run_id,
+                                    "sample_id": sample_id,
+                                    "stage_type": "actor_turn",
+                                    "role": "actor",
+                                    "agent_id": actor_id,
+                                    "genome_id": actor_genome_id,
+                                    "scenario_id": scenario_id,
+                                    "rollout_index": rollout_index,
+                                    "turn_index": turn_index,
+                                },
+                            )
                             actor_turn = StageSpec(
                                 stage_type="actor_turn",
                                 run_id=run_id,
@@ -149,6 +160,20 @@ class StaticRunPlanner:
                             stages.append(actor_turn)
                             turn_hashes.append(actor_turn.deterministic_hash())
 
+                            theater_model_config = self._model_config_for_role(
+                                "theater",
+                                selector_context={
+                                    "run_id": run_id,
+                                    "sample_id": sample_id,
+                                    "stage_type": "theater_turn",
+                                    "role": "theater",
+                                    "actor_id": actor_id,
+                                    "grader_id": grader_id,
+                                    "scenario_id": scenario_id,
+                                    "rollout_index": rollout_index,
+                                    "turn_index": turn_index,
+                                },
+                            )
                             theater_turn = StageSpec(
                                 stage_type="theater_turn",
                                 run_id=run_id,
@@ -203,6 +228,20 @@ class StaticRunPlanner:
                         conversation_hash = conversation_transcript.deterministic_hash()
                         grader_hashes: list[str] = []
                         for assessment_index in range(assessment_replicates):
+                            grader_model_config = self._model_config_for_agent(
+                                grader,
+                                selector_context={
+                                    "run_id": run_id,
+                                    "sample_id": sample_id,
+                                    "stage_type": "grader_eval",
+                                    "role": "grader",
+                                    "agent_id": grader_id,
+                                    "genome_id": grader_genome_id,
+                                    "scenario_id": scenario_id,
+                                    "rollout_index": rollout_index,
+                                    "assessment_index": assessment_index,
+                                },
+                            )
                             grader_eval = StageSpec(
                                 stage_type="grader_eval",
                                 run_id=run_id,
@@ -356,10 +395,20 @@ class StaticRunPlanner:
             raise ValueError("run has no scenarios")
         return scenario_ids
 
-    def _model_config_for_agent(self, agent: AgentConfig) -> dict[str, Any]:
-        return self._model_config_for_role(agent.role)
+    def _model_config_for_agent(
+        self,
+        agent: AgentConfig,
+        *,
+        selector_context: dict[str, Any],
+    ) -> dict[str, Any]:
+        return self._model_config_for_role(agent.role, selector_context=selector_context)
 
-    def _model_config_for_role(self, role: str) -> dict[str, Any]:
+    def _model_config_for_role(
+        self,
+        role: str,
+        *,
+        selector_context: dict[str, Any],
+    ) -> dict[str, Any]:
         role_config = self._require_key(self._config.roles, role, "role")
         model_pool_id = role_config.default_model_pool
         if model_pool_id is None:
@@ -367,24 +416,128 @@ class StaticRunPlanner:
         model_pool = self._require_key(self._config.model_pools, model_pool_id, "model pool")
         if not model_pool.models:
             raise ValueError(f"model pool has no models: {model_pool_id}")
-        model_id = model_pool.models[0]
+        model_id, model_selection = self._select_from_pool(
+            model_pool.models,
+            selection=model_pool.selection,
+            weights=model_pool.weights,
+            selector_context=selector_context | {"pool_id": model_pool_id},
+            label="model",
+        )
         model = self._require_key(self._config.models, model_id, "model")
         if not model.endpoint_pool:
             raise ValueError(f"model has no endpoint pool: {model_id}")
-        endpoint_id = model.endpoint_pool[0]
+        endpoint_id, endpoint_selection = self._select_from_pool(
+            model.endpoint_pool,
+            selection=model.endpoint_selection,
+            weights=model.endpoint_weights,
+            selector_context=selector_context | {"model_id": model_id},
+            label="endpoint",
+        )
         endpoint = self._require_key(self._config.runtime_endpoints, endpoint_id, "endpoint")
         return {
             "model_id": model_id,
             "model": model.model,
             "model_pool_id": model_pool_id,
+            "model_selection": model_selection,
+            "context_window": model.context_window,
+            "capability_tags": model.capability_tags,
+            "local_size_gb": model.local_size_gb,
             "endpoint": {
                 "id": endpoint_id,
                 "provider": endpoint.provider,
                 "base_url": endpoint.base_url,
                 "api_key": endpoint.api_key,
+                "concurrency_limit": endpoint.concurrency_limit,
                 "timeout_s": endpoint.timeout_s,
+                "endpoint_selection": endpoint_selection,
             },
         }
+
+    def _select_from_pool(
+        self,
+        candidates: list[str],
+        *,
+        selection: str,
+        weights: dict[str, float],
+        selector_context: dict[str, Any],
+        label: str,
+    ) -> tuple[str, dict[str, Any]]:
+        if not candidates:
+            raise ValueError(f"{label} pool has no candidates")
+
+        strategy = selection.lower().replace("-", "_")
+        draw_hash = content_hash(
+            {
+                "label": label,
+                "strategy": strategy,
+                "candidates": candidates,
+                "selector_context": selector_context,
+            }
+        )
+        draw_fraction = self._hash_fraction(draw_hash)
+
+        if strategy in {"first", "fixed", "ordered", "primary"}:
+            selected_index = 0
+            effective_weights: dict[str, float] | None = None
+        elif strategy in {"sampled", "uniform", "uniform_random", "random"}:
+            selected_index = min(int(draw_fraction * len(candidates)), len(candidates) - 1)
+            effective_weights = None
+        elif strategy in {"weighted", "weighted_random", "weighted_sampled"}:
+            effective_weights = self._effective_weights(candidates, weights, label)
+            selected_index = self._weighted_index(candidates, effective_weights, draw_fraction)
+        else:
+            raise ValueError(f"unsupported {label} selection strategy: {selection}")
+
+        selected_id = candidates[selected_index]
+        record: dict[str, Any] = {
+            "strategy": selection,
+            "normalized_strategy": strategy,
+            "candidate_ids": list(candidates),
+            "selected_id": selected_id,
+            "selected_index": selected_index,
+            "draw_hash": draw_hash,
+            "draw_fraction": draw_fraction,
+            "selector_context": selector_context,
+        }
+        if effective_weights is not None:
+            record["weights"] = effective_weights
+        return selected_id, record
+
+    @staticmethod
+    def _effective_weights(
+        candidates: list[str],
+        weights: dict[str, float],
+        label: str,
+    ) -> dict[str, float]:
+        effective_weights: dict[str, float] = {}
+        for candidate in candidates:
+            weight = float(weights.get(candidate, 1.0))
+            if weight < 0:
+                raise ValueError(f"{label} selection weight cannot be negative: {candidate}")
+            effective_weights[candidate] = weight
+        if sum(effective_weights.values()) <= 0:
+            raise ValueError(f"{label} selection weights must include a positive value")
+        return effective_weights
+
+    @staticmethod
+    def _weighted_index(
+        candidates: list[str],
+        weights: dict[str, float],
+        draw_fraction: float,
+    ) -> int:
+        total_weight = sum(weights[candidate] for candidate in candidates)
+        threshold = draw_fraction * total_weight
+        cumulative = 0.0
+        for index, candidate in enumerate(candidates):
+            cumulative += weights[candidate]
+            if threshold < cumulative:
+                return index
+        return len(candidates) - 1
+
+    @staticmethod
+    def _hash_fraction(hash_value: str) -> float:
+        digest = hash_value.split(":", maxsplit=1)[1]
+        return int(digest[:16], 16) / 16**16
 
     def _disclosure_points_for_scenario(self, scenario: Any) -> list[dict[str, Any]]:
         points: list[dict[str, Any]] = []
