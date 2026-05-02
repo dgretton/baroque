@@ -59,6 +59,49 @@ def test_actor_turn_handler_writes_one_model_call_artifact(tmp_path) -> None:
     asyncio.run(scenario())
 
 
+def test_actor_turn_handler_applies_capability_profile_controls(tmp_path) -> None:
+    async def scenario() -> None:
+        gateway = FakeGateway(["What assumptions matter?"])
+        store = LocalArtifactStore(tmp_path)
+        stage = _stage(
+            "actor_turn",
+            metadata={
+                "turn_index": 0,
+                "config_snapshot": {
+                    **_stage_spec("actor_turn").config_snapshot,
+                    "capability_profile_snapshot": {
+                        "id": "prompt_only_ollama",
+                        "allowed_controls": ["persona_text", "transcript_policy"],
+                        "denied_controls": ["sampling"],
+                        "provider_requirements": {"provider": "ollama_openai"},
+                    },
+                },
+                "requested_controls": {
+                    "persona_text": {"value": "You are careful."},
+                    "transcript_policy": "actor_running_window",
+                    "sampling": {"temperature": 0.8},
+                },
+            },
+        )
+
+        await actor_turn_handler(
+            stage,
+            StageContext(
+                runner_id="runner-1",
+                artifact_store=store,
+                inference_gateway=gateway,
+            ),
+        )
+
+        request = gateway.requests[0]
+        assert request.effective_controls["persona_text"] == {"value": "You are careful."}
+        assert request.effective_controls["transcript_policy"] == "actor_running_window"
+        assert request.dropped_controls["sampling"]["reason"] == "denied_by_capability_profile"
+        assert request.extra_body == {}
+
+    asyncio.run(scenario())
+
+
 def test_theater_turn_handler_hydrates_actor_question(tmp_path) -> None:
     async def scenario() -> None:
         gateway = FakeGateway(["The Theater should name assumptions."])

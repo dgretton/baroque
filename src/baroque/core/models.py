@@ -51,6 +51,7 @@ class ProviderRequest(BaseModel):
     api_key: str | None = None
     requested_controls: dict[str, Any] = Field(default_factory=dict)
     effective_controls: dict[str, Any] = Field(default_factory=dict)
+    dropped_controls: dict[str, Any] = Field(default_factory=dict)
     extra_body: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
 

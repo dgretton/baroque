@@ -13,7 +13,7 @@ In practice:
 - Store `model_pools`, not one model string.
 - Store `runtime_endpoints`, not one base URL.
 - Store `capability_profiles`, not one global execution mode.
-- Store `control_requests` and `effective_controls`, not just the final prompt.
+- Store `control_requests`, `effective_controls`, and `dropped_controls`, not just the final prompt.
 - Store `topologies`, `scenarios`, `rankers`, `judges`, and `mutation_operators` as named config objects.
 - Store `disclosure_points` and `disclosure_point_sets`, not an assessment rubric embedded in a prompt.
 
@@ -167,10 +167,11 @@ capability_profiles:
       - representation_features
 ```
 
-The compiler should keep two records:
+The compiler should keep three records:
 
 - `requested_controls`: what the genome wanted.
 - `effective_controls`: what the capability profile and provider actually used.
+- `dropped_controls`: what was rejected or could not be compiled, with reasons.
 
 This makes prompt-only and advanced runs comparable without hiding the difference.
 

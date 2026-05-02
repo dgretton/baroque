@@ -86,6 +86,7 @@ class StaticRunPlanner:
             run.metadata.get("mutation_replicates", 1),
             "mutation_replicates",
         )
+        capability_profile_snapshot = self._capability_profile_snapshot(run.capability_profile)
 
         stages: list[StageSpec] = []
         for scenario_id in scenario_ids:
@@ -94,6 +95,7 @@ class StaticRunPlanner:
             for actor_id, actor in actor_agents.items():
                 actor_genome_id = self._first_genome_id(actor_id, actor)
                 actor_genome = self._require_key(self._config.genomes, actor_genome_id, "genome")
+                actor_controls = self._controls_for_agent(actor, actor_genome)
                 for grader_id, grader in grader_agents.items():
                     grader_genome_id = self._first_genome_id(grader_id, grader)
                     grader_genome = self._require_key(
@@ -101,6 +103,7 @@ class StaticRunPlanner:
                         grader_genome_id,
                         "genome",
                     )
+                    grader_controls = self._controls_for_agent(grader, grader_genome)
                     for rollout_index in range(rollout_replicates):
                         sample_id = self._sample_id(
                             run_id,
@@ -136,6 +139,7 @@ class StaticRunPlanner:
                                 ),
                                 config_snapshot={
                                     "capability_profile": run.capability_profile,
+                                    "capability_profile_snapshot": capability_profile_snapshot,
                                     "topology": run.topology,
                                     "scenario_id": scenario_id,
                                     "scenario": scenario.model_dump(mode="json"),
@@ -144,7 +148,7 @@ class StaticRunPlanner:
                                     "actor_genome_id": actor_genome_id,
                                     "actor_genome": actor_genome.model_dump(mode="json"),
                                 },
-                                requested_controls=actor_genome.control_requests,
+                                requested_controls=actor_controls,
                                 metadata={
                                     "role": "actor",
                                     "agent_id": actor_id,
@@ -181,6 +185,7 @@ class StaticRunPlanner:
                                 parent_hashes=[actor_turn.deterministic_hash()],
                                 config_snapshot={
                                     "capability_profile": run.capability_profile,
+                                    "capability_profile_snapshot": capability_profile_snapshot,
                                     "topology": run.topology,
                                     "scenario_id": scenario_id,
                                     "scenario": scenario.model_dump(mode="json"),
@@ -207,6 +212,7 @@ class StaticRunPlanner:
                             parent_hashes=turn_hashes,
                             config_snapshot={
                                 "capability_profile": run.capability_profile,
+                                "capability_profile_snapshot": capability_profile_snapshot,
                                 "topology": run.topology,
                                 "scenario_id": scenario_id,
                                 "scenario": scenario.model_dump(mode="json"),
@@ -249,6 +255,7 @@ class StaticRunPlanner:
                                 parent_hashes=[conversation_hash],
                                 config_snapshot={
                                     "capability_profile": run.capability_profile,
+                                    "capability_profile_snapshot": capability_profile_snapshot,
                                     "topology": run.topology,
                                     "scenario_id": scenario_id,
                                     "scenario": scenario.model_dump(mode="json"),
@@ -258,7 +265,7 @@ class StaticRunPlanner:
                                     "grader_genome_id": grader_genome_id,
                                     "grader_genome": grader_genome.model_dump(mode="json"),
                                 },
-                                requested_controls=grader_genome.control_requests,
+                                requested_controls=grader_controls,
                                 metadata={
                                     "role": "grader",
                                     "agent_id": grader_id,
@@ -280,6 +287,7 @@ class StaticRunPlanner:
                             parent_hashes=grader_hashes,
                             config_snapshot={
                                 "capability_profile": run.capability_profile,
+                                "capability_profile_snapshot": capability_profile_snapshot,
                                 "topology": run.topology,
                                 "scenario_id": scenario_id,
                                 "scenario": scenario.model_dump(mode="json"),
@@ -310,6 +318,7 @@ class StaticRunPlanner:
                                 parent_hashes=[assessment_aggregate.deterministic_hash()],
                                 config_snapshot={
                                     "capability_profile": run.capability_profile,
+                                    "capability_profile_snapshot": capability_profile_snapshot,
                                     "topology": run.topology,
                                     "scenario_id": scenario_id,
                                     "scenario": scenario.model_dump(mode="json"),
@@ -343,6 +352,7 @@ class StaticRunPlanner:
                                 parent_hashes=[mutation_proposal.deterministic_hash()],
                                 config_snapshot={
                                     "capability_profile": run.capability_profile,
+                                    "capability_profile_snapshot": capability_profile_snapshot,
                                     "topology": run.topology,
                                     "scenario_id": scenario_id,
                                     "scenario": scenario.model_dump(mode="json"),
@@ -394,6 +404,63 @@ class StaticRunPlanner:
         if not scenario_ids:
             raise ValueError("run has no scenarios")
         return scenario_ids
+
+    def _capability_profile_snapshot(
+        self,
+        profile_id: str,
+        seen: set[str] | None = None,
+    ) -> dict[str, Any]:
+        seen = seen or set()
+        if profile_id in seen:
+            raise ValueError(f"capability profile extends cycle: {profile_id}")
+        seen.add(profile_id)
+
+        profile = self._require_key(
+            self._config.capability_profiles,
+            profile_id,
+            "capability profile",
+        )
+        if profile.extends:
+            parent = self._capability_profile_snapshot(profile.extends, seen)
+            child_allowed = list(profile.allowed_controls)
+            denied_controls = _unique(
+                [
+                    *[
+                        control
+                        for control in parent["denied_controls"]
+                        if control not in set(child_allowed)
+                    ],
+                    *profile.denied_controls,
+                ]
+            )
+            allowed_controls = _unique([*parent["allowed_controls"], *child_allowed])
+            allowed_controls = [
+                control for control in allowed_controls if control not in set(denied_controls)
+            ]
+            provider_requirements = _deep_merge(
+                parent["provider_requirements"],
+                profile.provider_requirements,
+            )
+        else:
+            allowed_controls = _unique(profile.allowed_controls)
+            denied_controls = _unique(profile.denied_controls)
+            provider_requirements = dict(profile.provider_requirements)
+
+        return {
+            "id": profile_id,
+            "extends": profile.extends,
+            "allowed_controls": allowed_controls,
+            "denied_controls": denied_controls,
+            "provider_requirements": provider_requirements,
+        }
+
+    def _controls_for_agent(self, agent: AgentConfig, genome: Any) -> dict[str, Any]:
+        role_config = self._require_key(self._config.roles, agent.role, "role")
+        return _deep_merge(
+            role_config.default_controls,
+            agent.default_controls,
+            genome.control_requests,
+        )
 
     def _model_config_for_agent(
         self,
@@ -606,3 +673,25 @@ class StaticRunPlanner:
             return mapping[key]
         except KeyError as exc:
             raise ValueError(f"unknown {label}: {key}") from exc
+
+
+def _unique(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    unique_values: list[str] = []
+    for value in values:
+        if value not in seen:
+            seen.add(value)
+            unique_values.append(value)
+    return unique_values
+
+
+def _deep_merge(*mappings: dict[str, Any]) -> dict[str, Any]:
+    merged: dict[str, Any] = {}
+    for mapping in mappings:
+        for key, value in mapping.items():
+            existing = merged.get(key)
+            if isinstance(existing, dict) and isinstance(value, dict):
+                merged[key] = _deep_merge(existing, value)
+            else:
+                merged[key] = value
+    return merged

@@ -70,6 +70,15 @@ def test_static_run_planner_creates_conversation_then_grader_stage() -> None:
     )
     assert theater_model_config["endpoint"]["id"] == "local_ollama"
     assert theater_model_config["endpoint"]["endpoint_selection"]["selected_id"] == "local_ollama"
+    assert actor_0.config_snapshot["capability_profile"] == "prompt_only_ollama"
+    assert actor_0.config_snapshot["capability_profile_snapshot"]["provider_requirements"] == {
+        "provider": "ollama_openai"
+    }
+    assert actor_0.requested_controls["transcript_policy"] == "actor_running_window"
+    assert actor_0.requested_controls["sampling"] == {"temperature": 0.8}
+    assert grader.requested_controls["plain_output_instructions"] == {
+        "value": "Return JSON with rating and justification fields."
+    }
     assert conversation.metadata["conversation_turns"] == 2
     assert grader.metadata["assessment_index"] == 0
     assert grader.config_snapshot["disclosure_points"][0]["id"] == "starter_assumptions"

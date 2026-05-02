@@ -336,18 +336,25 @@ def _provider_request_from_stage(
     base_url = endpoint.get("base_url") or "http://localhost:11434/v1"
     api_key = endpoint.get("api_key")
 
-    persona = persona_text
-    if persona is None:
-        persona = _control_value(stage.metadata.get("requested_controls", {}), "persona_text")
-    builder = QueryBuilder(
-        endpoint_id=endpoint_id,
-        provider=provider,
-        base_url=base_url,
-        api_key=api_key,
-        model=model_name,
-    )
-    if persona:
-        builder.with_persona(persona)
+    requested_controls = dict(stage.metadata.get("requested_controls", {}))
+    if persona_text is not None and "persona_text" not in requested_controls:
+        requested_controls["persona_text"] = {"value": persona_text}
+    try:
+        builder = QueryBuilder(
+            endpoint_id=endpoint_id,
+            provider=provider,
+            base_url=base_url,
+            api_key=api_key,
+            model=model_name,
+            capability_profile=_capability_profile(stage),
+        )
+    except ValueError as exc:
+        raise StageExecutionError(
+            str(exc),
+            retryable=False,
+            error_type="invalid_capability_profile",
+        ) from exc
+    builder.with_controls(requested_controls)
     builder.with_user(user_content)
     builder.with_metadata("stage_id", stage.stage_id)
     builder.with_metadata("content_hash", stage.content_hash)
@@ -747,6 +754,12 @@ def _conversation_turns(stage: StageRecord) -> int:
 
 def _actor_persona(stage: StageRecord) -> str | None:
     return _control_value(stage.metadata.get("requested_controls", {}), "persona_text")
+
+
+def _capability_profile(stage: StageRecord) -> dict[str, Any] | None:
+    config_snapshot = stage.metadata.get("config_snapshot") or {}
+    profile = config_snapshot.get("capability_profile_snapshot")
+    return profile if isinstance(profile, dict) else None
 
 
 def _theater_persona() -> str:

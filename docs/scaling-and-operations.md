@@ -47,7 +47,7 @@ Minimum stage fields:
 - `run_id`, `iteration_id`, `sample_id`.
 - `stage_type`: actor turn, theater response, grader eval, mutation, ranking comparison, etc.
 - `parents`: upstream content hashes.
-- `requested_controls` and `effective_controls`.
+- `requested_controls`, `effective_controls`, and `dropped_controls`.
 - `provider`, `endpoint`, `model`, `role`, `agent_id`, `genome_id`.
 - `status`: pending, leased, running, succeeded, failed_retryable, failed_terminal, cancelled.
 - `attempt`, `lease_owner`, `leased_until`.
