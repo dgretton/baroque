@@ -160,6 +160,7 @@ class StaticRunPlanner:
                                     "conversation_turns": scenario.conversation_turns,
                                     "model_config": actor_model_config,
                                     "actor_model_config": actor_model_config,
+                                    "role_output_contract": self._role_output_contract("actor"),
                                 },
                             )
                             stages.append(actor_turn)
@@ -200,6 +201,7 @@ class StaticRunPlanner:
                                     "actor_turn_hash": actor_turn.deterministic_hash(),
                                     "model_config": theater_model_config,
                                     "theater_model_config": theater_model_config,
+                                    "role_output_contract": self._role_output_contract("theater"),
                                 },
                             )
                             stages.append(theater_turn)
@@ -276,6 +278,7 @@ class StaticRunPlanner:
                                     "assessment_index": assessment_index,
                                     "conversation_hash": conversation_hash,
                                     "model_config": grader_model_config,
+                                    "role_output_contract": self._role_output_contract("grader"),
                                 },
                             )
                             stages.append(grader_eval)
@@ -493,6 +496,18 @@ class StaticRunPlanner:
             agent.default_controls,
             genome.control_requests,
         )
+
+    def _role_output_contract(self, role: str) -> dict[str, Any]:
+        """Return the role-owned I/O contract.
+
+        This is a separate layer from `default_controls`: it is appended after
+        genome `control_requests` at the call site so the contract has the last
+        word, and mutators (which only patch genome `control_requests`) cannot
+        rewrite it.
+        """
+
+        role_config = self._require_key(self._config.roles, role, "role")
+        return dict(role_config.output_contract or {})
 
     def _model_config_for_agent(
         self,

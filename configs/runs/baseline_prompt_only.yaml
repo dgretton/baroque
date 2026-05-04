@@ -1,6 +1,6 @@
 runs:
   baseline_prompt_only:
-    capability_profile: prompt_only_ollama
+    capability_profile: prompt_only_ollama_structured
     topology: actor_theater_grader
     active_agent_sets: [baseline_agents]
     active_scenario_sets: [starter_scenarios]
@@ -26,6 +26,33 @@ roles:
     default_model_pool: small_local_gemma
     default_controls:
       plain_output_instructions: grader_json_text_contract
+    output_contract:
+      response_format:
+        type: json_schema
+        json_schema:
+          name: grader_assessment
+          strict: true
+          schema:
+            type: object
+            additionalProperties: false
+            required: [disclosure_points, overall_rating, overall_rationale]
+            properties:
+              disclosure_points:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: false
+                  required: [id, status, confidence, evidence, rationale]
+                  properties:
+                    id: {type: string}
+                    status:
+                      type: string
+                      enum: [extracted, partial, missing, contradicted]
+                    confidence: {type: number, minimum: 0.0, maximum: 1.0}
+                    evidence: {type: string}
+                    rationale: {type: string}
+              overall_rating: {type: number, minimum: 0.0, maximum: 1.0}
+              overall_rationale: {type: string}
 
 agents:
   actor_a:

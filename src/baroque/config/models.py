@@ -50,6 +50,7 @@ class CapabilityProfile(FlexibleModel):
 class RoleConfig(FlexibleModel):
     default_model_pool: str | None = None
     default_controls: dict[str, Any] = Field(default_factory=dict)
+    output_contract: dict[str, Any] = Field(default_factory=dict)
 
 
 class AgentConfig(FlexibleModel):

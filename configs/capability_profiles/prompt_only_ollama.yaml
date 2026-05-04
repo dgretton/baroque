@@ -15,3 +15,8 @@ capability_profiles:
     provider_requirements:
       provider: ollama_openai
 
+  prompt_only_ollama_structured:
+    extends: prompt_only_ollama
+    allowed_controls:
+      - response_format
+

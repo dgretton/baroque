@@ -133,6 +133,8 @@ class QueryBuilder:
                 self._effective_controls[name] = value
         elif name == "model_choice":
             self._effective_controls[name] = value
+        elif name == "response_format":
+            self._compile_response_format(name, value)
         else:
             self._drop_control(name, value, "allowed_but_not_compiled")
 
@@ -155,6 +157,13 @@ class QueryBuilder:
                 self._drop_control(name, value, "invalid_message_example")
                 return
             self._messages.append(Message(role=role, content=content))
+        self._effective_controls[name] = value
+
+    def _compile_response_format(self, name: str, value: Any) -> None:
+        if not isinstance(value, dict) or "type" not in value:
+            self._drop_control(name, value, "invalid_response_format")
+            return
+        self._extra_body["response_format"] = value
         self._effective_controls[name] = value
 
     def _compile_sampling(self, name: str, value: Any) -> None:

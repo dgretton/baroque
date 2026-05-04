@@ -239,6 +239,72 @@ def test_grader_eval_handler_writes_artifact(tmp_path) -> None:
     asyncio.run(scenario())
 
 
+def test_grader_eval_handler_passes_role_output_contract_response_format(tmp_path) -> None:
+    async def scenario() -> None:
+        gateway = FakeGateway(
+            [
+                json.dumps(
+                    {
+                        "disclosure_points": [],
+                        "overall_rating": 0.5,
+                        "overall_rationale": "n/a",
+                    }
+                )
+            ]
+        )
+        store = LocalArtifactStore(tmp_path)
+        contract = {
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "grader_assessment",
+                    "schema": {
+                        "type": "object",
+                        "required": ["disclosure_points", "overall_rating", "overall_rationale"],
+                        "properties": {
+                            "disclosure_points": {"type": "array"},
+                            "overall_rating": {"type": "number"},
+                            "overall_rationale": {"type": "string"},
+                        },
+                    },
+                    "strict": True,
+                },
+            }
+        }
+        stage = _stage(
+            "grader_eval",
+            metadata={
+                "conversation_hash": "sha256:conversation",
+                "config_snapshot": {
+                    **_stage_spec("grader_eval").config_snapshot,
+                    "capability_profile_snapshot": {
+                        "id": "prompt_only_ollama_structured",
+                        "allowed_controls": ["response_format"],
+                        "denied_controls": [],
+                        "provider_requirements": {"provider": "ollama_openai"},
+                    },
+                },
+                "role_output_contract": contract,
+            },
+        )
+
+        await grader_eval_handler(
+            stage,
+            StageContext(
+                runner_id="runner-1",
+                artifact_store=store,
+                inference_gateway=gateway,
+            ),
+        )
+
+        request = gateway.requests[0]
+        assert request.extra_body["response_format"] == contract["response_format"]
+        assert request.effective_controls["response_format"] == contract["response_format"]
+        assert request.metadata["role_output_contract"] == contract
+
+    asyncio.run(scenario())
+
+
 def test_grader_eval_handler_hydrates_parent_conversation(tmp_path) -> None:
     async def scenario() -> None:
         gateway = FakeGateway()

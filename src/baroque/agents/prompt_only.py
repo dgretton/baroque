@@ -360,6 +360,13 @@ def _provider_request_from_stage(
             error_type="invalid_capability_profile",
         ) from exc
     builder.with_controls(requested_controls)
+    role_output_contract = stage.metadata.get("role_output_contract") or {}
+    if role_output_contract:
+        # Layer the role-owned contract after genome controls so it has the last
+        # word. Mutators only patch genome `control_requests`, so this is the
+        # surface they cannot rewrite.
+        builder.with_controls(role_output_contract)
+        builder.with_metadata("role_output_contract", role_output_contract)
     builder.with_user(user_content)
     builder.with_metadata("stage_id", stage.stage_id)
     builder.with_metadata("content_hash", stage.content_hash)

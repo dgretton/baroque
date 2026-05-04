@@ -58,6 +58,23 @@ def test_static_run_planner_creates_conversation_then_grader_stage() -> None:
     assert mutation_application.metadata["role"] == "mutation_applicator"
     assert mutation_proposal.metadata["mutation_operator_id"] == "deterministic_prompt_baseline"
     assert mutation_proposal.metadata["operator"] == "hand_authored"
+
+    grader_contract = grader.metadata["role_output_contract"]
+    response_format = grader_contract["response_format"]
+    assert response_format["type"] == "json_schema"
+    assert response_format["json_schema"]["name"] == "grader_assessment"
+    assert response_format["json_schema"]["strict"] is True
+    schema = response_format["json_schema"]["schema"]
+    assert schema["required"] == ["disclosure_points", "overall_rating", "overall_rationale"]
+    point_props = schema["properties"]["disclosure_points"]["items"]["properties"]
+    assert point_props["status"]["enum"] == [
+        "extracted",
+        "partial",
+        "missing",
+        "contradicted",
+    ]
+    assert actor_0.metadata["role_output_contract"] == {}
+    assert theater_0.metadata["role_output_contract"] == {}
     assert mutation_proposal.metadata["operator_implementation"] == "deterministic_prompt_baseline"
     mutation_operator_config = mutation_proposal.config_snapshot["mutation_operator"]["config"]
     assert mutation_operator_config["focus_point_count"] == 2
@@ -76,10 +93,12 @@ def test_static_run_planner_creates_conversation_then_grader_stage() -> None:
     )
     assert theater_model_config["endpoint"]["id"] == "local_ollama"
     assert theater_model_config["endpoint"]["endpoint_selection"]["selected_id"] == "local_ollama"
-    assert actor_0.config_snapshot["capability_profile"] == "prompt_only_ollama"
-    assert actor_0.config_snapshot["capability_profile_snapshot"]["provider_requirements"] == {
-        "provider": "ollama_openai"
-    }
+    assert actor_0.config_snapshot["capability_profile"] == "prompt_only_ollama_structured"
+    capability_snapshot = actor_0.config_snapshot["capability_profile_snapshot"]
+    assert capability_snapshot["provider_requirements"] == {"provider": "ollama_openai"}
+    # Structured profile inherits prompt_only_ollama and adds response_format
+    assert "response_format" in capability_snapshot["allowed_controls"]
+    assert "persona_text" in capability_snapshot["allowed_controls"]
     assert actor_0.requested_controls["transcript_policy"] == "actor_running_window"
     assert actor_0.requested_controls["sampling"] == {"temperature": 0.8}
     assert grader.requested_controls["plain_output_instructions"] == {
