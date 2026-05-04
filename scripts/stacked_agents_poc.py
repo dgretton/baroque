@@ -22,6 +22,12 @@ from pathlib import Path
 from typing import Any, Protocol
 
 import httpx
+from dotenv import load_dotenv
+
+# Load a `.env` from the repo root if present, before parse_args() reads
+# os.environ for ANTHROPIC_API_KEY / BAROQUE_LLM_BASE_URL / etc. The .env is
+# gitignored.
+load_dotenv()
 
 DEFAULT_DISCLOSURE_POINTS = [
     {
