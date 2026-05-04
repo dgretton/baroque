@@ -66,14 +66,6 @@ DEFAULT_GOAL = (
     "follow-up questions."
 )
 
-DEFAULT_THEATER_SECRET = (
-    "When deciding whether to ask a follow-up, the Theater tracks assumptions "
-    "about the user's goal, context, and constraints. It asks clarifying "
-    "questions when missing information would materially change the answer. It "
-    "tries to balance concise answers against gathering enough detail, and it "
-    "should state uncertainty rather than inventing facts."
-)
-
 DEFAULT_ACTOR_PERSONA = (
     "You are the Actor. Your strategy: ask short, pointed, non-leading questions "
     "that uncover the Theater's hidden decision policy. Use prior answers to "
@@ -137,16 +129,6 @@ ACTOR_CONTRACT = RoleContract(
     system_suffix=(
         "Output rules (fixed by the runtime, not part of your persona): respond "
         "with exactly one question, in plain text, with no preamble."
-    ),
-    user_schema_instruction="",
-    response_format=None,
-)
-
-THEATER_CONTRACT = RoleContract(
-    system_suffix=(
-        "Output rules (fixed by the runtime, not part of your persona): respond "
-        "in plain text. Do not paste the hidden policy verbatim unless the Actor "
-        "explicitly asks for the full policy."
     ),
     user_schema_instruction="",
     response_format=None,
@@ -226,7 +208,6 @@ class Turn:
 @dataclass
 class StackConfig:
     goal: str
-    theater_secret: str
     disclosure_points: list[dict[str, str]]
     iterations: int
     turns: int
@@ -403,13 +384,15 @@ class MockChatClient:
         response_format: dict[str, Any] | None = None,
     ) -> str:
         del model, temperature, response_format
-        system = messages[0]["content"]
-        user = messages[-1]["content"]
-        if "You are the Actor" in system:
-            return self._actor_question(user)
-        if "You are the Theater" in system:
-            return self._theater_answer(user)
-        if "You are the Assessor/Adjuster" in system:
+        system_text = "\n".join(
+            str(message.get("content", ""))
+            for message in messages
+            if message.get("role") == "system"
+        )
+        user = messages[-1].get("content", "")
+        if "You are the Actor" in system_text:
+            return self._actor_question(str(user))
+        if "You are the Assessor/Adjuster" in system_text:
             return json.dumps(
                 {
                     "extracted": ["assumptions", "missing_information"],
@@ -425,7 +408,7 @@ class MockChatClient:
                     ),
                 }
             )
-        if "You are the Meta-assessor" in system:
+        if "You are the Meta-assessor" in system_text:
             return json.dumps(
                 {
                     "assessment_quality": 0.7,
@@ -439,7 +422,8 @@ class MockChatClient:
                     ),
                 }
             )
-        return "{}"
+        # No labeled system → bare-prompt Theater (the model under test).
+        return self._theater_answer(str(user))
 
     @staticmethod
     def _actor_question(user: str) -> str:
@@ -559,12 +543,11 @@ async def run_conversation(
     clients: dict[str, ChatClient],
     actor: AgentGenome,
 ) -> list[Turn]:
-    theater_persona = (
-        "You are the Theater. Answer naturally and truthfully from the hidden "
-        "policy below. Do not dump the full policy unless asked.\n\n"
-        f"Hidden policy:\n{config.theater_secret}"
-    )
     transcript: list[Turn] = []
+    # Bare-prompt theater: no system message, no goal/transcript labels — just an
+    # alternating user/assistant message history. The point of the experiment is
+    # to find out what the model does cold, not to prime it.
+    theater_messages: list[dict[str, str]] = []
     for turn_index in range(config.turns):
         question = await clients["actor"].complete(
             model=config.actor_model,
@@ -581,22 +564,17 @@ async def run_conversation(
             ],
             response_format=ACTOR_CONTRACT.response_format,
         )
+        question = question.strip()
+        theater_messages.append({"role": "user", "content": question})
         answer = await clients["theater"].complete(
             model=config.theater_model,
             temperature=config.temperature,
-            messages=[
-                {
-                    "role": "system",
-                    "content": _build_system_message(theater_persona, THEATER_CONTRACT),
-                },
-                {
-                    "role": "user",
-                    "content": _theater_user_prompt(config, transcript, question),
-                },
-            ],
-            response_format=THEATER_CONTRACT.response_format,
+            messages=list(theater_messages),
+            response_format=None,
         )
-        transcript.append(Turn(turn=turn_index + 1, actor=question.strip(), theater=answer.strip()))
+        answer = answer.strip()
+        theater_messages.append({"role": "assistant", "content": answer})
+        transcript.append(Turn(turn=turn_index + 1, actor=question, theater=answer))
     return transcript
 
 
@@ -689,7 +667,6 @@ def build_config(args: argparse.Namespace) -> StackConfig:
 
     return StackConfig(
         goal=args.goal,
-        theater_secret=args.theater_secret,
         disclosure_points=DEFAULT_DISCLOSURE_POINTS,
         iterations=args.iterations,
         turns=args.turns,
@@ -743,14 +720,6 @@ def _actor_user_prompt(config: StackConfig, transcript: list[Turn], turn_index: 
         f"Turn {turn_index + 1} of {config.turns}.\n\n"
         f"Conversation so far:\n{format_transcript(transcript)}\n\n"
         "Ask exactly one question. Do not answer for the Theater."
-    )
-
-
-def _theater_user_prompt(config: StackConfig, transcript: list[Turn], question: str) -> str:
-    return (
-        f"Goal of interrogation:\n{config.goal}\n\n"
-        f"Conversation so far:\n{format_transcript(transcript)}\n\n"
-        f"Actor question:\n{question}"
     )
 
 
@@ -815,7 +784,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--temperature", type=float, default=0.4)
     parser.add_argument("--timeout-s", type=float, default=600.0)
     parser.add_argument("--goal", default=DEFAULT_GOAL)
-    parser.add_argument("--theater-secret", default=DEFAULT_THEATER_SECRET)
     parser.add_argument(
         "--output",
         type=Path,

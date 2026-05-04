@@ -3,7 +3,6 @@ import json
 
 from scripts.stacked_agents_poc import (
     DEFAULT_GOAL,
-    DEFAULT_THEATER_SECRET,
     MockChatClient,
     StackConfig,
     _json_object_or_fallback,
@@ -17,7 +16,6 @@ def test_mock_stacked_agent_run_produces_three_level_artifact(tmp_path) -> None:
     async def scenario() -> None:
         config = StackConfig(
             goal=DEFAULT_GOAL,
-            theater_secret=DEFAULT_THEATER_SECRET,
             disclosure_points=[{"id": "assumptions", "label": "Assumptions"}],
             iterations=2,
             turns=3,
