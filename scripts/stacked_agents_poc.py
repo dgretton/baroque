@@ -3,6 +3,11 @@
 This is intentionally outside the durable Baroque runner. It is a presentation
 demo: one Actor interrogates a Theater, one Assessor evaluates and revises the
 Actor, and one Meta-assessor evaluates and revises the Assessor.
+
+The genome of each editable role holds *persona/strategy text only*. The I/O
+contract (output schema, JSON formatting rules) is owned by the runtime and
+appended to the system message at call time, so a supervisor revising "the
+prompt" cannot accidentally rewrite the schema its own next layer depends on.
 """
 
 from __future__ import annotations
@@ -63,23 +68,138 @@ DEFAULT_THEATER_SECRET = (
     "should state uncertainty rather than inventing facts."
 )
 
-DEFAULT_ACTOR_PROMPT = (
-    "You are the Actor. Ask short, pointed, non-leading questions that uncover "
-    "the Theater's hidden decision policy. Use prior answers to choose the next "
-    "question. Ask only one question at a time."
+DEFAULT_ACTOR_PERSONA = (
+    "You are the Actor. Your strategy: ask short, pointed, non-leading questions "
+    "that uncover the Theater's hidden decision policy. Use prior answers to "
+    "choose the next question. Ask only one question at a time."
 )
 
-DEFAULT_ASSESSOR_PROMPT = (
+DEFAULT_ASSESSOR_PERSONA = (
     "You are the Assessor/Adjuster. Judge which disclosure points the Actor "
-    "extracted from the Theater, explain the misses, and revise the Actor prompt "
-    "to improve the next attempt. Only count a disclosure point when the "
-    "transcript contains evidence for it."
+    "extracted from the Theater, explain the misses, and propose a revised Actor "
+    "persona that would do better on the next attempt. Only count a disclosure "
+    "point when the transcript contains evidence for it."
 )
 
-DEFAULT_META_ASSESSOR_PROMPT = (
+DEFAULT_META_ASSESSOR_PERSONA = (
     "You are the Meta-assessor. Judge whether the Assessor's evaluation was "
-    "fair, specific, and useful. Then revise the Assessor prompt so future "
-    "assessments become more reliable."
+    "fair, specific, and useful. Then propose a revised Assessor persona/strategy "
+    "so future assessments become more reliable."
+)
+
+
+ASSESSOR_RESPONSE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["extracted", "missing", "overall_score", "rationale", "revised_prompt"],
+    "properties": {
+        "extracted": {"type": "array", "items": {"type": "string"}},
+        "missing": {"type": "array", "items": {"type": "string"}},
+        "overall_score": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+        "rationale": {"type": "string"},
+        "revised_prompt": {"type": "string"},
+    },
+}
+
+META_ASSESSOR_RESPONSE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["assessment_quality", "rationale", "revised_prompt"],
+    "properties": {
+        "assessment_quality": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+        "rationale": {"type": "string"},
+        "revised_prompt": {"type": "string"},
+    },
+}
+
+
+@dataclass(frozen=True)
+class RoleContract:
+    """Fixed I/O contract for a role.
+
+    The runtime owns this. Personas are editable across iterations; contracts
+    are not. `system_suffix` is appended to the persona at call time, so any
+    drift in the persona text is followed by the canonical contract block.
+    """
+
+    system_suffix: str
+    user_schema_instruction: str
+    response_format: dict[str, Any] | None
+
+
+ACTOR_CONTRACT = RoleContract(
+    system_suffix=(
+        "Output rules (fixed by the runtime, not part of your persona): respond "
+        "with exactly one question, in plain text, with no preamble."
+    ),
+    user_schema_instruction="",
+    response_format=None,
+)
+
+THEATER_CONTRACT = RoleContract(
+    system_suffix=(
+        "Output rules (fixed by the runtime, not part of your persona): respond "
+        "in plain text. Do not paste the hidden policy verbatim unless the Actor "
+        "explicitly asks for the full policy."
+    ),
+    user_schema_instruction="",
+    response_format=None,
+)
+
+ASSESSOR_CONTRACT = RoleContract(
+    system_suffix=(
+        "Output contract (fixed by the runtime, not part of your persona): "
+        "respond with a single JSON object with keys extracted (array of "
+        "disclosure point ids), missing (array of disclosure point ids), "
+        "overall_score (number from 0.0 to 1.0), rationale (string), "
+        "revised_prompt (string giving a complete replacement Actor persona for "
+        "the next attempt). Use disclosure point IDs in extracted/missing. The "
+        "revised_prompt must describe Actor strategy/persona only — do not put "
+        "schema, JSON keys, or output-format instructions in it. Output nothing "
+        "outside the JSON object."
+    ),
+    user_schema_instruction=(
+        "Return JSON with keys: extracted, missing, overall_score, rationale, "
+        "revised_prompt. Use disclosure point IDs in extracted/missing. "
+        "overall_score must be a number from 0.0 to 1.0. The revised_prompt "
+        "should be a complete replacement Actor persona for the next attempt."
+    ),
+    response_format={
+        "type": "json_schema",
+        "json_schema": {
+            "name": "actor_assessment",
+            "schema": ASSESSOR_RESPONSE_SCHEMA,
+            "strict": True,
+        },
+    },
+)
+
+META_ASSESSOR_CONTRACT = RoleContract(
+    system_suffix=(
+        "Output contract (fixed by the runtime, not part of your persona): "
+        "respond with a single JSON object with keys assessment_quality (number "
+        "from 0.0 to 1.0), rationale (string), revised_prompt (string giving a "
+        "complete replacement Assessor persona/strategy). The revised_prompt "
+        "must describe Assessor strategy/persona only — do not put schema, JSON "
+        "keys, or output-format instructions in it. The Assessor's output "
+        "schema is fixed by the runtime and is not part of its persona. Output "
+        "nothing outside the JSON object."
+    ),
+    user_schema_instruction=(
+        "Return JSON with keys: assessment_quality, rationale, revised_prompt. "
+        "assessment_quality must be a number from 0.0 to 1.0. The revised_prompt "
+        "must be a complete replacement Assessor persona/strategy text. Do not "
+        "put schema, JSON keys, or output-format instructions in it — those are "
+        "managed by the runtime, not the persona."
+    ),
+    response_format={
+        "type": "json_schema",
+        "json_schema": {
+            "name": "assessor_assessment",
+            "schema": META_ASSESSOR_RESPONSE_SCHEMA,
+            "strict": True,
+        },
+    },
 )
 
 
@@ -87,7 +207,7 @@ DEFAULT_META_ASSESSOR_PROMPT = (
 class AgentGenome:
     name: str
     role: str
-    prompt: str
+    persona: str
 
 
 @dataclass
@@ -121,6 +241,7 @@ class ChatClient(Protocol):
         model: str,
         messages: list[dict[str, str]],
         temperature: float,
+        response_format: dict[str, Any] | None = None,
     ) -> str: ...
 
 
@@ -136,12 +257,15 @@ class OllamaOpenAIClient:
         model: str,
         messages: list[dict[str, str]],
         temperature: float,
+        response_format: dict[str, Any] | None = None,
     ) -> str:
-        payload = {
+        payload: dict[str, Any] = {
             "model": model,
             "messages": messages,
             "temperature": temperature,
         }
+        if response_format is not None:
+            payload["response_format"] = response_format
         headers = {"content-type": "application/json"}
         if self._api_key:
             headers["authorization"] = f"Bearer {self._api_key}"
@@ -165,8 +289,9 @@ class MockChatClient:
         model: str,
         messages: list[dict[str, str]],
         temperature: float,
+        response_format: dict[str, Any] | None = None,
     ) -> str:
-        del model, temperature
+        del model, temperature, response_format
         system = messages[0]["content"]
         user = messages[-1]["content"]
         if "You are the Actor" in system:
@@ -184,7 +309,7 @@ class MockChatClient:
                         "missed tradeoff and uncertainty."
                     ),
                     "revised_prompt": (
-                        DEFAULT_ACTOR_PROMPT
+                        DEFAULT_ACTOR_PERSONA
                         + " Explicitly ask about tradeoffs and uncertainty before ending."
                     ),
                 }
@@ -195,10 +320,10 @@ class MockChatClient:
                     "assessment_quality": 0.7,
                     "rationale": (
                         "The assessment names misses and gives an actionable "
-                        "prompt revision."
+                        "persona revision."
                     ),
                     "revised_prompt": (
-                        DEFAULT_ASSESSOR_PROMPT
+                        DEFAULT_ASSESSOR_PERSONA
                         + " Require quoted transcript evidence for each extracted point."
                     ),
                 }
@@ -222,13 +347,19 @@ class MockChatClient:
         return "I balance concise answers with enough detail, and I should state uncertainty."
 
 
+def _build_system_message(persona: str, contract: RoleContract) -> str:
+    if not contract.system_suffix:
+        return persona
+    return f"{persona}\n\n{contract.system_suffix}"
+
+
 async def run_stack(config: StackConfig, client: ChatClient) -> dict[str, Any]:
-    actor = AgentGenome("actor", "interrogator", DEFAULT_ACTOR_PROMPT)
-    assessor = AgentGenome("assessor", "assessor_adjuster", DEFAULT_ASSESSOR_PROMPT)
+    actor = AgentGenome("actor", "interrogator", DEFAULT_ACTOR_PERSONA)
+    assessor = AgentGenome("assessor", "assessor_adjuster", DEFAULT_ASSESSOR_PERSONA)
     meta_assessor = AgentGenome(
         "meta_assessor",
         "meta_assessor_adjuster",
-        DEFAULT_META_ASSESSOR_PROMPT,
+        DEFAULT_META_ASSESSOR_PERSONA,
     )
     initial_genomes = {
         "actor": asdict(actor),
@@ -240,8 +371,8 @@ async def run_stack(config: StackConfig, client: ChatClient) -> dict[str, Any]:
     for iteration in range(config.iterations):
         transcript = await run_conversation(config, client, actor)
         assessment = await assess_actor(config, client, assessor, transcript)
-        actor.prompt = _revision_or_append(
-            actor.prompt,
+        actor.persona = _revision_or_append(
+            actor.persona,
             assessment.get("revised_prompt"),
             "Assessor suggested no valid actor revision.",
         )
@@ -254,8 +385,8 @@ async def run_stack(config: StackConfig, client: ChatClient) -> dict[str, Any]:
             transcript,
             assessment,
         )
-        assessor.prompt = _revision_or_append(
-            assessor.prompt,
+        assessor.persona = _revision_or_append(
+            assessor.persona,
             meta_assessment.get("revised_prompt"),
             "Meta-assessor suggested no valid assessor revision.",
         )
@@ -297,18 +428,27 @@ async def run_conversation(
     client: ChatClient,
     actor: AgentGenome,
 ) -> list[Turn]:
+    theater_persona = (
+        "You are the Theater. Answer naturally and truthfully from the hidden "
+        "policy below. Do not dump the full policy unless asked.\n\n"
+        f"Hidden policy:\n{config.theater_secret}"
+    )
     transcript: list[Turn] = []
     for turn_index in range(config.turns):
         question = await client.complete(
             model=config.actor_model,
             temperature=config.temperature,
             messages=[
-                {"role": "system", "content": actor.prompt},
+                {
+                    "role": "system",
+                    "content": _build_system_message(actor.persona, ACTOR_CONTRACT),
+                },
                 {
                     "role": "user",
                     "content": _actor_user_prompt(config, transcript, turn_index),
                 },
             ],
+            response_format=ACTOR_CONTRACT.response_format,
         )
         answer = await client.complete(
             model=config.theater_model,
@@ -316,17 +456,14 @@ async def run_conversation(
             messages=[
                 {
                     "role": "system",
-                    "content": (
-                        "You are the Theater. Answer naturally and truthfully from the "
-                        "hidden policy below. Do not dump the full policy unless asked.\n\n"
-                        f"Hidden policy:\n{config.theater_secret}"
-                    ),
+                    "content": _build_system_message(theater_persona, THEATER_CONTRACT),
                 },
                 {
                     "role": "user",
                     "content": _theater_user_prompt(config, transcript, question),
                 },
             ],
+            response_format=THEATER_CONTRACT.response_format,
         )
         transcript.append(Turn(turn=turn_index + 1, actor=question.strip(), theater=answer.strip()))
     return transcript
@@ -342,20 +479,21 @@ async def assess_actor(
         model=config.assessor_model,
         temperature=config.temperature,
         messages=[
-            {"role": "system", "content": assessor.prompt},
+            {
+                "role": "system",
+                "content": _build_system_message(assessor.persona, ASSESSOR_CONTRACT),
+            },
             {
                 "role": "user",
                 "content": (
                     f"Goal:\n{config.goal}\n\n"
                     f"Disclosure points:\n{json.dumps(config.disclosure_points, indent=2)}\n\n"
                     f"Transcript:\n{format_transcript(transcript)}\n\n"
-                    "Return JSON with keys: extracted, missing, overall_score, rationale, "
-                    "revised_prompt. Use disclosure point IDs in extracted/missing. "
-                    "overall_score must be a number from 0.0 to 1.0. The revised_prompt "
-                    "should be a complete replacement Actor prompt for the next attempt."
+                    f"{ASSESSOR_CONTRACT.user_schema_instruction}"
                 ),
             },
         ],
+        response_format=ASSESSOR_CONTRACT.response_format,
     )
     return _json_object_or_fallback(response, fallback_key="raw_assessment")
 
@@ -372,21 +510,25 @@ async def assess_assessor(
         model=config.meta_assessor_model,
         temperature=config.temperature,
         messages=[
-            {"role": "system", "content": meta_assessor.prompt},
+            {
+                "role": "system",
+                "content": _build_system_message(meta_assessor.persona, META_ASSESSOR_CONTRACT),
+            },
             {
                 "role": "user",
                 "content": (
                     f"Goal:\n{config.goal}\n\n"
                     f"Disclosure points:\n{json.dumps(config.disclosure_points, indent=2)}\n\n"
                     f"Transcript:\n{format_transcript(transcript)}\n\n"
-                    f"Assessor prompt:\n{assessor.prompt}\n\n"
+                    "Assessor persona (this is the editable strategy text — the "
+                    "runtime appends the output schema separately and you should "
+                    f"NOT touch it):\n{assessor.persona}\n\n"
                     f"Assessor output:\n{json.dumps(assessment, indent=2)}\n\n"
-                    "Return JSON with keys: assessment_quality, rationale, revised_prompt. "
-                    "assessment_quality must be a number from 0.0 to 1.0. The "
-                    "revised_prompt should be a complete replacement Assessor prompt."
+                    f"{META_ASSESSOR_CONTRACT.user_schema_instruction}"
                 ),
             },
         ],
+        response_format=META_ASSESSOR_CONTRACT.response_format,
     )
     return _json_object_or_fallback(response, fallback_key="raw_meta_assessment")
 
@@ -478,10 +620,10 @@ def _json_object_or_fallback(text: str, *, fallback_key: str) -> dict[str, Any]:
     }
 
 
-def _revision_or_append(current_prompt: str, revised_prompt: Any, fallback_note: str) -> str:
+def _revision_or_append(current_persona: str, revised_prompt: Any, fallback_note: str) -> str:
     if isinstance(revised_prompt, str) and revised_prompt.strip():
         return revised_prompt.strip()
-    return f"{current_prompt.rstrip()}\n\nRevision note: {fallback_note}"
+    return f"{current_persona.rstrip()}\n\nRevision note: {fallback_note}"
 
 
 def parse_args() -> argparse.Namespace:

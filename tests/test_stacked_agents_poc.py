@@ -43,8 +43,8 @@ def test_mock_stacked_agent_run_produces_three_level_artifact(tmp_path) -> None:
             "missing_information",
         ]
         assert saved["iterations"][0]["meta_assessment"]["assessment_quality"] == 0.7
-        assert "Explicitly ask about tradeoffs" in saved["final_genomes"]["actor"]["prompt"]
-        assert "quoted transcript evidence" in saved["final_genomes"]["assessor"]["prompt"]
+        assert "Explicitly ask about tradeoffs" in saved["final_genomes"]["actor"]["persona"]
+        assert "quoted transcript evidence" in saved["final_genomes"]["assessor"]["persona"]
 
     asyncio.run(scenario())
 
