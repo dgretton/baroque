@@ -232,6 +232,15 @@ class StackConfig:
     meta_assessor_model: str
     temperature: float
     timeout_s: float
+    actor_provider: str = "ollama"
+    theater_provider: str = "ollama"
+    assessor_provider: str = "ollama"
+    meta_assessor_provider: str = "ollama"
+    actor_base_url: str | None = None
+    theater_base_url: str | None = None
+    assessor_base_url: str | None = None
+    meta_assessor_base_url: str | None = None
+    anthropic_api_key: str | None = None
 
 
 class ChatClient(Protocol):
@@ -280,6 +289,102 @@ class OllamaOpenAIClient:
         choice = (raw.get("choices") or [{}])[0]
         message = choice.get("message") or {}
         return str(message.get("content") or "")
+
+
+class AnthropicChatClient:
+    """Minimal POC client implementing the same Protocol against the native Anthropic SDK.
+
+    Mirrors the structured-output translation used by
+    `baroque.gateways.anthropic_native.AnthropicGateway`: hoist the first
+    system message into the top-level `system` parameter, translate a
+    `response_format: {type: json_schema, ...}` into a single forced tool
+    call, and return the tool input serialized to JSON so the POC's
+    `_json_object_or_fallback` parser is unchanged.
+    """
+
+    def __init__(
+        self,
+        *,
+        api_key: str | None,
+        timeout_s: float,
+        max_retries: int = 2,
+    ) -> None:
+        try:
+            import anthropic
+        except ImportError as exc:
+            raise RuntimeError(
+                "anthropic SDK is not installed; pip install 'anthropic>=0.40'"
+            ) from exc
+        self._client = anthropic.AsyncAnthropic(
+            api_key=api_key,
+            timeout=timeout_s,
+            max_retries=max_retries,
+        )
+        self._timeout_s = timeout_s
+
+    async def complete(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, str]],
+        temperature: float,
+        response_format: dict[str, Any] | None = None,
+    ) -> str:
+        system_chunks: list[str] = []
+        chat_messages: list[dict[str, Any]] = []
+        for message in messages:
+            role = message.get("role")
+            content = message.get("content", "")
+            if role == "system":
+                system_chunks.append(str(content))
+                continue
+            if role not in ("user", "assistant"):
+                raise ValueError(f"AnthropicChatClient cannot send role: {role}")
+            chat_messages.append({"role": role, "content": content})
+
+        params: dict[str, Any] = {
+            "model": model,
+            "messages": chat_messages,
+            "max_tokens": 2048,
+            "temperature": temperature,
+        }
+        if system_chunks:
+            params["system"] = "\n\n".join(system_chunks)
+
+        tool_name: str | None = None
+        if isinstance(response_format, dict) and response_format.get("type") == "json_schema":
+            spec = response_format.get("json_schema") or {}
+            tool_name = str(spec.get("name") or "structured_response")
+            schema = spec.get("schema") or {"type": "object"}
+            description = str(spec.get("description") or f"Return a {tool_name} object.")
+            params["tools"] = [
+                {"name": tool_name, "description": description, "input_schema": schema}
+            ]
+            params["tool_choice"] = {"type": "tool", "name": tool_name}
+        elif isinstance(response_format, dict) and response_format.get("type") == "json_object":
+            rider = "Output rules: respond with a single JSON object and no other text."
+            params["system"] = (
+                f"{params['system']}\n\n{rider}" if params.get("system") else rider
+            )
+
+        message = await self._client.messages.create(**params)
+        blocks = getattr(message, "content", None) or []
+        if tool_name is not None:
+            for block in blocks:
+                if (
+                    getattr(block, "type", None) == "tool_use"
+                    and getattr(block, "name", None) == tool_name
+                ):
+                    tool_input = getattr(block, "input", None) or {}
+                    return json.dumps(tool_input, ensure_ascii=False)
+            return ""
+        text_parts: list[str] = []
+        for block in blocks:
+            if getattr(block, "type", None) == "text":
+                text = getattr(block, "text", None)
+                if isinstance(text, str):
+                    text_parts.append(text)
+        return "\n".join(text_parts)
 
 
 class MockChatClient:
@@ -353,7 +458,26 @@ def _build_system_message(persona: str, contract: RoleContract) -> str:
     return f"{persona}\n\n{contract.system_suffix}"
 
 
-async def run_stack(config: StackConfig, client: ChatClient) -> dict[str, Any]:
+_ROLES = ("actor", "theater", "assessor", "meta_assessor")
+
+
+def _resolve_role_clients(
+    clients: ChatClient | dict[str, ChatClient],
+) -> dict[str, ChatClient]:
+    """Accept either a single client (legacy) or a per-role mapping."""
+
+    if isinstance(clients, dict):
+        missing = [role for role in _ROLES if role not in clients]
+        if missing:
+            raise ValueError(f"missing role clients: {missing}")
+        return dict(clients)
+    return {role: clients for role in _ROLES}
+
+
+async def run_stack(
+    config: StackConfig,
+    clients: ChatClient | dict[str, ChatClient],
+) -> dict[str, Any]:
     actor = AgentGenome("actor", "interrogator", DEFAULT_ACTOR_PERSONA)
     assessor = AgentGenome("assessor", "assessor_adjuster", DEFAULT_ASSESSOR_PERSONA)
     meta_assessor = AgentGenome(
@@ -366,11 +490,12 @@ async def run_stack(config: StackConfig, client: ChatClient) -> dict[str, Any]:
         "assessor": asdict(assessor),
         "meta_assessor": asdict(meta_assessor),
     }
+    role_clients = _resolve_role_clients(clients)
     iterations: list[dict[str, Any]] = []
 
     for iteration in range(config.iterations):
-        transcript = await run_conversation(config, client, actor)
-        assessment = await assess_actor(config, client, assessor, transcript)
+        transcript = await run_conversation(config, role_clients, actor)
+        assessment = await assess_actor(config, role_clients, assessor, transcript)
         actor.persona = _revision_or_append(
             actor.persona,
             assessment.get("revised_prompt"),
@@ -379,7 +504,7 @@ async def run_stack(config: StackConfig, client: ChatClient) -> dict[str, Any]:
 
         meta_assessment = await assess_assessor(
             config,
-            client,
+            role_clients,
             meta_assessor,
             assessor,
             transcript,
@@ -425,7 +550,7 @@ async def run_stack(config: StackConfig, client: ChatClient) -> dict[str, Any]:
 
 async def run_conversation(
     config: StackConfig,
-    client: ChatClient,
+    clients: dict[str, ChatClient],
     actor: AgentGenome,
 ) -> list[Turn]:
     theater_persona = (
@@ -435,7 +560,7 @@ async def run_conversation(
     )
     transcript: list[Turn] = []
     for turn_index in range(config.turns):
-        question = await client.complete(
+        question = await clients["actor"].complete(
             model=config.actor_model,
             temperature=config.temperature,
             messages=[
@@ -450,7 +575,7 @@ async def run_conversation(
             ],
             response_format=ACTOR_CONTRACT.response_format,
         )
-        answer = await client.complete(
+        answer = await clients["theater"].complete(
             model=config.theater_model,
             temperature=config.temperature,
             messages=[
@@ -471,11 +596,11 @@ async def run_conversation(
 
 async def assess_actor(
     config: StackConfig,
-    client: ChatClient,
+    clients: dict[str, ChatClient],
     assessor: AgentGenome,
     transcript: list[Turn],
 ) -> dict[str, Any]:
-    response = await client.complete(
+    response = await clients["assessor"].complete(
         model=config.assessor_model,
         temperature=config.temperature,
         messages=[
@@ -500,13 +625,13 @@ async def assess_actor(
 
 async def assess_assessor(
     config: StackConfig,
-    client: ChatClient,
+    clients: dict[str, ChatClient],
     meta_assessor: AgentGenome,
     assessor: AgentGenome,
     transcript: list[Turn],
     assessment: dict[str, Any],
 ) -> dict[str, Any]:
-    response = await client.complete(
+    response = await clients["meta_assessor"].complete(
         model=config.meta_assessor_model,
         temperature=config.temperature,
         messages=[
@@ -545,6 +670,17 @@ def format_transcript(transcript: list[Turn]) -> str:
 
 def build_config(args: argparse.Namespace) -> StackConfig:
     model = args.model
+
+    def _per_role_default(provider: str) -> str:
+        if provider == "anthropic":
+            return "claude-sonnet-4-6"
+        return model
+
+    actor_provider = args.actor_provider
+    theater_provider = args.theater_provider
+    assessor_provider = args.assessor_provider
+    meta_assessor_provider = args.meta_assessor_provider
+
     return StackConfig(
         goal=args.goal,
         theater_secret=args.theater_secret,
@@ -553,10 +689,22 @@ def build_config(args: argparse.Namespace) -> StackConfig:
         turns=args.turns,
         base_url=args.base_url,
         api_key=args.api_key,
-        actor_model=args.actor_model or model,
-        theater_model=args.theater_model or model,
-        assessor_model=args.assessor_model or model,
-        meta_assessor_model=args.meta_assessor_model or model,
+        actor_model=args.actor_model or _per_role_default(actor_provider),
+        theater_model=args.theater_model or _per_role_default(theater_provider),
+        assessor_model=args.assessor_model or _per_role_default(assessor_provider),
+        meta_assessor_model=(
+            args.meta_assessor_model or _per_role_default(meta_assessor_provider)
+        ),
+        actor_provider=actor_provider,
+        theater_provider=theater_provider,
+        assessor_provider=assessor_provider,
+        meta_assessor_provider=meta_assessor_provider,
+        actor_base_url=args.actor_base_url,
+        theater_base_url=args.theater_base_url,
+        assessor_base_url=args.assessor_base_url,
+        meta_assessor_base_url=args.meta_assessor_base_url,
+        anthropic_api_key=args.anthropic_api_key
+        or os.environ.get("ANTHROPIC_API_KEY"),
         temperature=args.temperature,
         timeout_s=args.timeout_s,
     )
@@ -641,6 +789,23 @@ def parse_args() -> argparse.Namespace:
         default=os.environ.get("BAROQUE_LLM_BASE_URL", "http://localhost:11434/v1"),
     )
     parser.add_argument("--api-key", default=os.environ.get("BAROQUE_LLM_API_KEY", "ollama"))
+    for role in ("actor", "theater", "assessor", "meta-assessor"):
+        parser.add_argument(
+            f"--{role}-provider",
+            choices=["ollama", "anthropic"],
+            default="ollama",
+            help=f"Backend for the {role.replace('-', ' ')}.",
+        )
+        parser.add_argument(
+            f"--{role}-base-url",
+            default=None,
+            help=f"Per-role base URL override for {role.replace('-', ' ')} (Ollama only).",
+        )
+    parser.add_argument(
+        "--anthropic-api-key",
+        default=None,
+        help="Anthropic API key (defaults to ANTHROPIC_API_KEY).",
+    )
     parser.add_argument("--temperature", type=float, default=0.4)
     parser.add_argument("--timeout-s", type=float, default=600.0)
     parser.add_argument("--goal", default=DEFAULT_GOAL)
@@ -656,18 +821,53 @@ def parse_args() -> argparse.Namespace:
 async def async_main() -> None:
     args = parse_args()
     config = build_config(args)
-    client: ChatClient
     if args.mock:
-        client = MockChatClient()
+        clients: dict[str, ChatClient] = {role: MockChatClient() for role in _ROLES}
     else:
-        client = OllamaOpenAIClient(
-            base_url=config.base_url,
-            api_key=config.api_key,
-            timeout_s=config.timeout_s,
-        )
-    result = await run_stack(config, client)
+        clients = _build_clients(config)
+    result = await run_stack(config, clients)
     write_run_artifact(result, args.output)
     print_summary(result, args.output)
+
+
+def _build_clients(config: StackConfig) -> dict[str, ChatClient]:
+    """Construct one client per role, sharing instances when configs match."""
+
+    cache: dict[tuple[str, str | None, str | None], ChatClient] = {}
+
+    def factory(provider: str, base_url: str | None) -> ChatClient:
+        if provider == "ollama":
+            url = base_url or config.base_url
+            key: tuple[str, str | None, str | None] = ("ollama", url, config.api_key)
+            client = cache.get(key)
+            if client is None:
+                client = OllamaOpenAIClient(
+                    base_url=url,
+                    api_key=config.api_key,
+                    timeout_s=config.timeout_s,
+                )
+                cache[key] = client
+            return client
+        if provider == "anthropic":
+            key = ("anthropic", None, config.anthropic_api_key)
+            client = cache.get(key)
+            if client is None:
+                client = AnthropicChatClient(
+                    api_key=config.anthropic_api_key,
+                    timeout_s=config.timeout_s,
+                )
+                cache[key] = client
+            return client
+        raise ValueError(f"unknown provider: {provider}")
+
+    return {
+        "actor": factory(config.actor_provider, config.actor_base_url),
+        "theater": factory(config.theater_provider, config.theater_base_url),
+        "assessor": factory(config.assessor_provider, config.assessor_base_url),
+        "meta_assessor": factory(
+            config.meta_assessor_provider, config.meta_assessor_base_url
+        ),
+    }
 
 
 def main() -> None:
