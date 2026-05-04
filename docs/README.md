@@ -9,4 +9,5 @@ This directory holds the project design documents and implementation-facing note
 - `implementation-architecture.md`: repo structure, system boundaries, and language/component selection.
 - `model-runtime-and-selection.md`: local model runtime plan, Gemma 4 sizing, and configurable model selection guidance.
 - `scaling-and-operations.md`: async runner, restartability, logging, storage, and local/cloud scaling strategy.
+- `stacked-agent-poc.md`: sidecar three-level agent demo for presentation/probing.
 - `storage-strategy.md`: config, runtime, logging, and research-results storage plan for long-running experiments.

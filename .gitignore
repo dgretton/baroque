@@ -8,4 +8,5 @@ dist/
 build/
 *.egg-info/
 data/
+runs/
 research/sources/skim-sources/
